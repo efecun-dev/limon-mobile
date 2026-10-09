@@ -23,6 +23,34 @@ interface OrderDetailModalProps {
   onClose: () => void;
 }
 
+export function getLineImage(line: any): string | null {
+  if (!line) return null;
+  if (line.imageUrl && typeof line.imageUrl === 'string') return line.imageUrl;
+  if (line.image && typeof line.image === 'string') return line.image;
+  if (line.product?.imageUrl && typeof line.product.imageUrl === 'string') return line.product.imageUrl;
+  if (line.product?.image && typeof line.product.image === 'string') return line.product.image;
+  if (Array.isArray(line.product?.imageUrls) && line.product.imageUrls[0]) return line.product.imageUrls[0];
+  if (Array.isArray(line.product?.images) && line.product.images[0]) return line.product.images[0];
+  if (Array.isArray(line.images) && line.images[0]) return line.images[0];
+  return null;
+}
+
+export function getLinePreviousStock(line: any): number | null {
+  if (!line) return null;
+  if (typeof line.previousStock === 'number') return line.previousStock;
+  if (typeof line.product?.previousStock === 'number') return line.product.previousStock;
+  if (typeof line.product?.stock === 'number') return line.product.stock;
+  if (typeof line.product?.currentStock === 'number') return line.product.currentStock;
+  if (typeof line.merchantStock === 'number') return line.merchantStock;
+  if (Array.isArray(line.items)) {
+    for (const it of line.items) {
+      if (typeof it?.previousStock === 'number') return it.previousStock;
+      if (typeof it?.stock === 'number') return it.stock;
+    }
+  }
+  return null;
+}
+
 const STATUS_MAP: Record<string, { label: string; dot: string; text: string; bg: string }> = {
   Created: { label: 'Yeni Sipariş', dot: '#3B82F6', text: '#1D4ED8', bg: '#EFF6FF' },
   Picking: { label: 'Toplanıyor', dot: '#F59E0B', text: '#B45309', bg: '#FFFBEB' },
@@ -186,13 +214,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
             <Card style={styles.infoCard}>
               <View style={styles.sectionTitleRow}>
                 <MaterialCommunityIcons name="moped" size={16} color={colors.textPrimary} />
-                <Text style={styles.sectionTitle}>Kurye & Teslimat Bilgileri</Text>
+                <Text style={styles.sectionTitle}>Kurye ve Müşteri Bilgisi</Text>
               </View>
 
-              {/* Kurye Bilgisi */}
+              {/* Kurye Bilgisi - Sadece hazırlık aşamasında kurye yaklaştı yazar */}
               <View style={styles.courierBox}>
                 {['Shipped', 'Delivered'].includes(order.packageStatus) ? (
                   <Text style={styles.courierStatusOk}>✓ Kurye paketi teslim aldı / yolda.</Text>
+                ) : ['Cancelled', 'UnSupplied'].includes(order.packageStatus) ? (
+                  <Text style={styles.courierStatusWait}>Sipariş iptal edildi / tamamlanmadı.</Text>
                 ) : order.isCourierNearby ? (
                   <Text style={styles.courierStatusAlert}>
                     ⚡ Kurye Şubeye Yaklaştı — Siparişi Hazırlayın!
@@ -219,26 +249,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                 </View>
               ) : null}
 
-              {/* Müşteri & Adres Bilgisi */}
+              {/* Müşteri Bilgisi (Adres Kaldırıldı) */}
               <View style={styles.customerBox}>
                 <Text style={styles.customerName}>
                   Alıcı: {order.customer?.firstName} {order.customer?.lastName}
                 </Text>
-                {order.shipmentAddress && (
-                  <Text style={styles.addressText}>
-                    {order.shipmentAddress.address1} {order.shipmentAddress.neighborhood},{' '}
-                    {order.shipmentAddress.district} / {order.shipmentAddress.city}
-                  </Text>
-                )}
-                {order.shipmentAddress?.addressDescription ? (
-                  <Text style={styles.addressDesc}>
-                    Adres Tarifi: {order.shipmentAddress.addressDescription}
-                  </Text>
-                ) : null}
               </View>
             </Card>
 
-            {/* 4. Sipariş Kalemleri Tablosu */}
+            {/* 4. Sipariş Kalemleri Tablosu (Görsel & Önceki Stok Dahil) */}
             <Card style={styles.itemsCard}>
               <View style={styles.sectionTitleRow}>
                 <MaterialCommunityIcons name="shopping-outline" size={16} color={colors.textPrimary} />
@@ -248,9 +267,9 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
               </View>
 
               <View style={styles.tableHeaderRow}>
-                <Text style={[styles.thText, { flex: 0.6 }]}>ADET</Text>
-                <Text style={[styles.thText, { flex: 2 }]}>ÜRÜN ADI & BARKOD</Text>
-                <Text style={[styles.thText, { flex: 1, textAlign: 'right' }]}>BİRİM</Text>
+                <Text style={[styles.thText, { width: 50 }]}>GÖRSEL</Text>
+                <Text style={[styles.thText, { flex: 2, paddingLeft: 6 }]}>ÜRÜN VE STOK</Text>
+                <Text style={[styles.thText, { flex: 1, textAlign: 'right' }]}>BİRİM / ADET</Text>
                 <Text style={[styles.thText, { flex: 1, textAlign: 'right' }]}>TOPLAM</Text>
               </View>
 
@@ -262,6 +281,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                   const altCount = line.items?.filter((it: any) => it.isAlternative).length || 0;
                   const cancCount = line.items?.filter((it: any) => it.isCancelled).length || 0;
                   const isCauseOfCancel = line.items?.some((it: any) => it.causedCancel);
+                  const img = getLineImage(line);
+                  const prevStock = getLinePreviousStock(line);
 
                   return (
                     <View
@@ -271,15 +292,36 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                         isCauseOfCancel && styles.itemRowCancelCause,
                       ]}
                     >
-                      <View style={{ flex: 0.6 }}>
-                        <Text style={styles.itemQty}>{quantity}×</Text>
-                      </View>
+                      {/* Ürün Fotoğrafı */}
+                      <TouchableOpacity
+                        style={styles.itemImageBtn}
+                        onPress={() => img && setSelectedImage(img)}
+                        activeOpacity={img ? 0.7 : 1}
+                      >
+                        {img ? (
+                          <Image source={{ uri: img }} style={styles.itemImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.itemImagePlaceholder}>
+                            <MaterialCommunityIcons name="package-variant-closed" size={18} color="#9CA3AF" />
+                          </View>
+                        )}
+                      </TouchableOpacity>
 
-                      <View style={{ flex: 2 }}>
+                      <View style={{ flex: 2, paddingLeft: 6 }}>
                         <Text style={styles.itemName}>
                           {line.product?.name || line.product?.productSaleName || 'Ürün'}
                         </Text>
                         <Text style={styles.itemBarcode}>{line.barcode || '-'}</Text>
+
+                        {/* Önceki Stok Bilgisi Rozeti */}
+                        {prevStock !== null && (
+                          <View style={styles.prevStockChip}>
+                            <MaterialCommunityIcons name="history" size={10} color="#4B5563" />
+                            <Text style={styles.prevStockChipText}>
+                              Önceki Stok: <Text style={styles.prevStockChipBold}>{prevStock}</Text>
+                            </Text>
+                          </View>
+                        )}
 
                         {/* Kalem Rozetleri */}
                         <View style={styles.lineBadgesRow}>
@@ -304,7 +346,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                       </View>
 
                       <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                        <Text style={styles.itemUnitPrice}>{unitPrice.toFixed(2)} ₺</Text>
+                        <Text style={styles.itemUnitPrice}>{quantity} × {unitPrice.toFixed(2)} ₺</Text>
                       </View>
 
                       <View style={{ flex: 1, alignItems: 'flex-end' }}>
@@ -384,6 +426,30 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
           </ScrollView>
         </View>
       </View>
+
+      {/* Görsel Büyütme Modalı */}
+      <Modal
+        visible={!!selectedImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedImage(null)}
+      >
+        <View style={styles.imageModalOverlay}>
+          <TouchableOpacity
+            style={styles.imageModalCloseBtn}
+            onPress={() => setSelectedImage(null)}
+          >
+            <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image
+              source={{ uri: selectedImage }}
+              style={styles.imageModalFull}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
     </Modal>
   );
 };
@@ -843,5 +909,62 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     color: '#34D399',
+  },
+  itemImageBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  itemImage: {
+    width: '100%',
+    height: '100%',
+  },
+  itemImagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  prevStockChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  prevStockChipText: {
+    fontSize: 9,
+    color: '#4B5563',
+  },
+  prevStockChipBold: {
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  imageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageModalCloseBtn: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    padding: 10,
+    zIndex: 10,
+  },
+  imageModalFull: {
+    width: '90%',
+    height: '70%',
   },
 });

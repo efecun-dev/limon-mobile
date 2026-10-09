@@ -26,6 +26,8 @@ export const MoreMenuScreen: React.FC<{
   onNavigateToProductCreate?: () => void;
   onNavigateToBarcode?: () => void;
   onNavigateToRawOrders?: () => void;
+  onNavigateToCancellations?: () => void;
+  onNavigateToPriceRadar?: () => void;
 }> = ({
   onOpenServerSettings,
   onNavigateToLevels,
@@ -35,6 +37,8 @@ export const MoreMenuScreen: React.FC<{
   onNavigateToProductCreate,
   onNavigateToBarcode,
   onNavigateToRawOrders,
+  onNavigateToCancellations,
+  onNavigateToPriceRadar,
 }) => {
   const { user, logout, activeBranchName } = useAuth();
   const { serverUrl, isConnected, latencyMs, testConnection } = useServer();
@@ -146,6 +150,26 @@ export const MoreMenuScreen: React.FC<{
               </View>
               <Text style={styles.toolTitle}>Barkod Sorgu</Text>
               <Text style={styles.toolDesc}>Katalog taraması</Text>
+            </TouchableOpacity>
+          )}
+
+          {onNavigateToCancellations && (
+            <TouchableOpacity onPress={onNavigateToCancellations} style={styles.toolItem}>
+              <View style={[styles.toolIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <MaterialCommunityIcons name="close-circle-multiple-outline" size={20} color="#DC2626" />
+              </View>
+              <Text style={styles.toolTitle}>İptal Analizi</Text>
+              <Text style={styles.toolDesc}>Kök neden & ciro kaybı</Text>
+            </TouchableOpacity>
+          )}
+
+          {onNavigateToPriceRadar && (
+            <TouchableOpacity onPress={onNavigateToPriceRadar} style={styles.toolItem}>
+              <View style={[styles.toolIconBox, { backgroundColor: '#F3E8FF' }]}>
+                <MaterialCommunityIcons name="radar" size={20} color="#7C3AED" />
+              </View>
+              <Text style={styles.toolTitle}>Fiyat Radarı</Text>
+              <Text style={styles.toolDesc}>12 şube uçurum tespiti</Text>
             </TouchableOpacity>
           )}
 

@@ -20,7 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBranchPicker,
   quickStats,
 }) => {
-  const { user, activeBranchName } = useAuth();
+  const { activeBranchName } = useAuth();
   const { isConnected, latencyMs } = useServer();
 
   return (
@@ -69,8 +69,11 @@ export const Header: React.FC<HeaderProps> = ({
             <MaterialCommunityIcons name="chevron-down" size={14} color={colors.textMuted} />
           </TouchableOpacity>
         ) : (
-          <View style={styles.userBadge}>
-            <Text style={styles.userNameText}>{user?.name || 'Sistem Yöneticisi'}</Text>
+          <View style={styles.branchPickerBtn}>
+            <MaterialCommunityIcons name="store-outline" size={14} color={colors.textSecondary} />
+            <Text style={styles.branchNameText} numberOfLines={1}>
+              {activeBranchName}
+            </Text>
           </View>
         )}
 

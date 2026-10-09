@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Clipboard,
   Platform,
+  Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, layout, typography } from '../theme/colors';
@@ -22,7 +23,7 @@ import { Card } from '../components/common/Card';
 import { Badge } from '../components/common/Badge';
 import { EmptyState } from '../components/common/EmptyState';
 import { ErrorView } from '../components/common/ErrorView';
-import { OrderDetailModal } from './OrderDetailModal';
+import { OrderDetailModal, getLineImage, getLinePreviousStock } from './OrderDetailModal';
 import { BarcodeScannerModal } from '../components/common/BarcodeScannerModal';
 
 export const getCancellationReason = (order: any): string | null => {
@@ -185,7 +186,8 @@ export const OrdersScreen: React.FC<{
             </View>
 
             <View style={styles.badgeGroup}>
-              {item.isCourierNearby && (
+              {item.isCourierNearby &&
+                !['Shipped', 'Delivered', 'Cancelled', 'UnSupplied'].includes(item.packageStatus) && (
                 <View style={styles.courierTag}>
                   <MaterialCommunityIcons name="moped" size={12} color="#C2410C" />
                   <Text style={styles.courierTagText}>Kurye Yaklaştı</Text>
@@ -219,6 +221,47 @@ export const OrdersScreen: React.FC<{
               </Text>
             </View>
           ) : null}
+
+          {/* Sipariş Ürünleri Önizlemesi (Fotoğraf & Önceki Stok) */}
+          {item.lines && item.lines.length > 0 && (
+            <View style={styles.cardLinesBox}>
+              {item.lines.slice(0, 3).map((line: any, idx: number) => {
+                const img = getLineImage(line);
+                const prevStock = getLinePreviousStock(line);
+                const qty = line.items?.length || line.amount || 1;
+                const pName = line.product?.name || line.product?.productSaleName || line.name || 'Ürün';
+
+                return (
+                  <View key={idx} style={styles.cardLineRow}>
+                    <View style={styles.cardLineThumbWrap}>
+                      {img ? (
+                        <Image source={{ uri: img }} style={styles.cardLineThumb} resizeMode="contain" />
+                      ) : (
+                        <MaterialCommunityIcons name="package-variant-closed" size={13} color="#9CA3AF" />
+                      )}
+                    </View>
+                    <View style={styles.cardLineInfo}>
+                      <Text style={styles.cardLineName} numberOfLines={1}>
+                        <Text style={styles.cardLineQty}>{qty}× </Text>
+                        {pName}
+                      </Text>
+                    </View>
+                    {prevStock !== null ? (
+                      <View style={styles.cardLinePrevStock}>
+                        <MaterialCommunityIcons name="history" size={10} color="#4B5563" />
+                        <Text style={styles.cardLinePrevStockText}>Önceki: {prevStock}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+              {item.lines.length > 3 && (
+                <Text style={styles.cardMoreLinesText}>
+                  +{item.lines.length - 3} ürün daha...
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Alt Satır: Alarmlar & Tutar */}
           <View style={styles.cardFooter}>
@@ -645,5 +688,68 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     color: '#111827',
+  },
+  cardLinesBox: {
+    backgroundColor: '#F9FAFB',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#F3F4F6',
+    paddingVertical: 5,
+    paddingHorizontal: 6,
+    marginVertical: 4,
+    borderRadius: 2,
+    gap: 4,
+  },
+  cardLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardLineThumbWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 2,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  cardLineThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  cardLineInfo: {
+    flex: 1,
+  },
+  cardLineName: {
+    fontSize: 10,
+    color: '#1F2937',
+    fontWeight: '500',
+  },
+  cardLineQty: {
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  cardLinePrevStock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+  },
+  cardLinePrevStockText: {
+    fontSize: 8,
+    color: '#374151',
+    fontWeight: '600',
+  },
+  cardMoreLinesText: {
+    fontSize: 9,
+    color: '#6B7280',
+    fontStyle: 'italic',
+    marginTop: 2,
   },
 });

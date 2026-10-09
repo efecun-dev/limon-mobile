@@ -27,6 +27,8 @@ import { ProductCreateScreen } from '../screens/ProductCreateScreen';
 import { BarcodeSearchScreen } from '../screens/BarcodeSearchScreen';
 import { MoreMenuScreen } from '../screens/MoreMenuScreen';
 import { RawOrdersModal } from '../screens/RawOrdersModal';
+import { CancellationAnalysisScreen } from '../screens/CancellationAnalysisScreen';
+import { PriceAnomalyRadarScreen } from '../screens/PriceAnomalyRadarScreen';
 
 type MainTabKey = 'dashboard' | 'orders' | 'revenue' | 'levels' | 'stocks' | 'more';
 type SubScreenKey =
@@ -35,6 +37,8 @@ type SubScreenKey =
   | 'reviews'
   | 'product_create'
   | 'barcode'
+  | 'cancellations'
+  | 'price_radar'
   | null;
 
 interface TabItem {
@@ -59,6 +63,15 @@ export const MainNavigator: React.FC = () => {
   const [showServerModal, setShowServerModal] = useState(false);
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [showRawOrdersModal, setShowRawOrdersModal] = useState(false);
+
+  // Ekranlar arası barkod ve ürün aktarımı
+  const [targetStockBarcode, setTargetStockBarcode] = useState<string | null>(null);
+  const [prefillProductData, setPrefillProductData] = useState<{
+    barcode?: string;
+    title?: string;
+    brand?: string;
+    category?: string;
+  } | null>(null);
 
   // Canlı Bildirim Sayaçları (Panel Navbar'daki stats gibi)
   const [stats, setStats] = useState({ orders: 0, returns: 0 });
@@ -169,7 +182,13 @@ export const MainNavigator: React.FC = () => {
             <Text style={styles.subHeaderTitle}>Trendyol Ürün Ekleme</Text>
             <View style={{ width: 40 }} />
           </View>
-          <ProductCreateScreen onSuccess={() => setSubScreen(null)} />
+          <ProductCreateScreen
+            initialData={prefillProductData}
+            onSuccess={() => {
+              setPrefillProductData(null);
+              setSubScreen(null);
+            }}
+          />
         </View>
       );
     }
@@ -186,11 +205,55 @@ export const MainNavigator: React.FC = () => {
             <View style={{ width: 40 }} />
           </View>
           <BarcodeSearchScreen
-            onFindInStock={() => {
+            onFindInStock={(barcode) => {
+              setTargetStockBarcode(barcode);
+              setSubScreen(null);
+              setActiveTab('stocks');
+            }}
+            onNavigateToProductCreate={(prefill) => {
+              setPrefillProductData(prefill || null);
+              setSubScreen('product_create');
+            }}
+          />
+        </View>
+      );
+    }
+
+    if (subScreen === 'cancellations') {
+      return (
+        <View style={styles.subScreenContainer}>
+          <View style={styles.subHeader}>
+            <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.backBtn}>
+              <MaterialCommunityIcons name="arrow-left" size={20} color={colors.textPrimary} />
+              <Text style={styles.backBtnText}>Geri</Text>
+            </TouchableOpacity>
+            <Text style={styles.subHeaderTitle}>İptal & Kök Neden Analizi</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <CancellationAnalysisScreen
+            onOpenServerSettings={() => setShowServerModal(true)}
+            onNavigateToStockProduct={(barcode: string) => {
+              setTargetStockBarcode(barcode);
               setSubScreen(null);
               setActiveTab('stocks');
             }}
           />
+        </View>
+      );
+    }
+
+    if (subScreen === 'price_radar') {
+      return (
+        <View style={styles.subScreenContainer}>
+          <View style={styles.subHeader}>
+            <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.backBtn}>
+              <MaterialCommunityIcons name="arrow-left" size={20} color={colors.textPrimary} />
+              <Text style={styles.backBtnText}>Geri</Text>
+            </TouchableOpacity>
+            <Text style={styles.subHeaderTitle}>Fiyat Anomali Radarı (12 Şube)</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <PriceAnomalyRadarScreen onOpenServerSettings={() => setShowServerModal(true)} />
         </View>
       );
     }
@@ -207,6 +270,7 @@ export const MainNavigator: React.FC = () => {
             onNavigateToClaims={() => setSubScreen('claims')}
             onNavigateToReviews={() => setSubScreen('reviews')}
             onNavigateToLevels={() => setActiveTab('levels')}
+            onNavigateToCancellations={() => setSubScreen('cancellations')}
           />
         );
       case 'orders':
@@ -223,8 +287,14 @@ export const MainNavigator: React.FC = () => {
       case 'stocks':
         return (
           <StocksScreen
+            initialBarcode={targetStockBarcode}
+            onClearInitialBarcode={() => setTargetStockBarcode(null)}
             onOpenServerSettings={() => setShowServerModal(true)}
             onOpenBranchPicker={() => setShowBranchModal(true)}
+            onNavigateToProductCreate={(prefill) => {
+              setPrefillProductData(prefill || null);
+              setSubScreen('product_create');
+            }}
           />
         );
       case 'more':
@@ -238,6 +308,8 @@ export const MainNavigator: React.FC = () => {
             onNavigateToProductCreate={() => setSubScreen('product_create')}
             onNavigateToBarcode={() => setSubScreen('barcode')}
             onNavigateToRawOrders={() => setShowRawOrdersModal(true)}
+            onNavigateToCancellations={() => setSubScreen('cancellations')}
+            onNavigateToPriceRadar={() => setSubScreen('price_radar')}
           />
         );
       default:

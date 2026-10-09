@@ -31,11 +31,13 @@ export const PriceUpdateModal: React.FC<PriceUpdateModalProps> = ({
   onSuccess,
   targetStoreId,
 }) => {
-  if (!product) return null;
-
   // Mevcut ilk fiyatı bul
-  const currentPrice = Object.values(product.stocks || {}).find((s) => s.sellingPrice)?.sellingPrice || 0;
-  const currentQty = Object.values(product.stocks || {}).find((s) => typeof s.quantity === 'number')?.quantity || 0;
+  const currentPrice = product
+    ? Object.values(product.stocks || {}).find((s) => s.sellingPrice)?.sellingPrice || 0
+    : 0;
+  const currentQty = product
+    ? Object.values(product.stocks || {}).find((s) => typeof s.quantity === 'number')?.quantity || 0
+    : 0;
 
   const [priceInput, setPriceInput] = useState('');
   const [stockInput, setStockInput] = useState('');
@@ -48,7 +50,9 @@ export const PriceUpdateModal: React.FC<PriceUpdateModalProps> = ({
       setStockInput(currentQty ? currentQty.toString() : '');
       setOnSale(true);
     }
-  }, [visible, product]);
+  }, [visible, product, currentPrice, currentQty]);
+
+  if (!product) return null;
 
   const handleApplyPercentage = (percent: number) => {
     const base = parseFloat(priceInput) || currentPrice || 0;

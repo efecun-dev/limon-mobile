@@ -17,6 +17,7 @@ import { Card } from '../components/common/Card';
 import { Badge } from '../components/common/Badge';
 import { EmptyState } from '../components/common/EmptyState';
 import { ErrorView } from '../components/common/ErrorView';
+import { Level1RecoverySimulatorModal } from '../components/common/Level1RecoverySimulatorModal';
 
 export const QUALITY_THRESHOLDS = {
   LEVEL_1: {
@@ -65,6 +66,7 @@ export const SeviyeAnaliziScreen: React.FC<{ onOpenServerSettings: () => void }>
   const [levelFilter, setLevelFilter] = useState<'ALL' | 'Seviye 1' | 'Seviye 2' | 'Seviye 3'>('ALL');
   const [selectedStoreDetail, setSelectedStoreDetail] = useState<any | null>(null);
   const [showThresholdsModal, setShowThresholdsModal] = useState(false);
+  const [simulatorModalVisible, setSimulatorModalVisible] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
 
@@ -189,6 +191,14 @@ export const SeviyeAnaliziScreen: React.FC<{ onOpenServerSettings: () => void }>
         </View>
         <View style={styles.subHeaderRight}>
           <TouchableOpacity
+            style={styles.simBtn}
+            onPress={() => setSimulatorModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="calculator" size={13} color="#FFFFFF" />
+            <Text style={styles.simBtnText}>Simülatör</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.refreshBtn}
             onPress={() => loadData(true)}
             activeOpacity={0.7}
@@ -242,6 +252,26 @@ export const SeviyeAnaliziScreen: React.FC<{ onOpenServerSettings: () => void }>
             })}
           </ScrollView>
         </View>
+
+        {/* Seviye 1 Kurtarma Simülatörü Banner Kartı */}
+        <TouchableOpacity
+          onPress={() => setSimulatorModalVisible(true)}
+          style={styles.simulatorBanner}
+          activeOpacity={0.8}
+        >
+          <View style={styles.simBannerLeft}>
+            <View style={styles.simIconBadge}>
+              <MaterialCommunityIcons name="target" size={18} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.simBannerTitle}>SEVİYE 1 KURTARMA SİMÜLATÖRÜ</Text>
+              <Text style={styles.simBannerSub}>
+                Komisyon tasarrufu ve gereken sıfır hatalı sipariş hedefini şube bazlı simüle edin
+              </Text>
+            </View>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
 
         {/* 3. Market Seviyesi KPI Kartı */}
         <Card style={styles.marketCard}>
@@ -672,6 +702,14 @@ export const SeviyeAnaliziScreen: React.FC<{ onOpenServerSettings: () => void }>
           </View>
         </View>
       </Modal>
+
+      {/* Seviye 1 Kurtarma Simülatörü Modalı */}
+      <Level1RecoverySimulatorModal
+        visible={simulatorModalVisible}
+        onClose={() => setSimulatorModalVisible(false)}
+        stores={allStores}
+        selectedStoreId={selectedStoreDetail?.storeId}
+      />
     </View>
   );
 };
@@ -720,6 +758,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  simBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 2,
+    gap: 3,
+  },
+  simBtnText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
   },
   refreshBtn: {
     flexDirection: 'row',
@@ -1178,5 +1230,43 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textPrimary,
     fontWeight: '500',
+  },
+  simulatorBanner: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 4,
+    padding: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  simBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 6,
+  },
+  simIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  simBannerTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#111827',
+    letterSpacing: 0.3,
+  },
+  simBannerSub: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 14,
   },
 });

@@ -16,26 +16,87 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, layout, typography } from '../theme/colors';
 import { useAuth } from '../context/AuthContext';
 import { useServer } from '../context/ServerContext';
-import { stocksService } from '../api/services';
-import { ProductStockItem, StocksApiResponse } from '../types/api';
+import { stocksService, barcodeService } from '../api/services';
+import { ProductStockItem, StocksApiResponse, BarcodeSearchResult } from '../types/api';
 import { BRANCHES } from '../context/BranchConstants';
 import { Card } from '../components/common/Card';
 import { EmptyState } from '../components/common/EmptyState';
 import { ErrorView } from '../components/common/ErrorView';
 import { PriceUpdateModal } from './PriceUpdateModal';
 import { BarcodeScannerModal } from '../components/common/BarcodeScannerModal';
+import { ScannedProductDetailModal } from '../components/common/ScannedProductDetailModal';
+import { Button } from '../components/common/Button';
 
 const STOCK_FILTERS = [
   { key: 'all', label: 'TÜMÜ' },
   { key: 'in_stock', label: 'STOKTA' },
   { key: 'critical', label: 'KRİTİK' },
   { key: 'out_of_stock', label: 'TÜKENDİ' },
+  { key: 'perishable', label: 'BOZULABİLİR' },
 ];
 
+export function isPerishableProduct(p: ProductStockItem): boolean {
+  const text = `${p.category || ''} ${p.title || ''} ${p.brand || ''}`.toLowerCase();
+  const perishableKeywords = [
+    'meyve',
+    'sebze',
+    'ekmek',
+    'fırın',
+    'süt',
+    'yoğurt',
+    'peynir',
+    'kaşar',
+    'tereyağ',
+    'kaymak',
+    'lor',
+    'çökelek',
+    'kahvaltılık',
+    'şarküteri',
+    'et',
+    'kıyma',
+    'tavuk',
+    'köfte',
+    'sucuk',
+    'salam',
+    'sosis',
+    'pastırma',
+    'dondurulmuş',
+    'yumurta',
+    'manav',
+    'kasap',
+    'unlu mamul',
+    'balık',
+    'meze',
+    'tatlı',
+    'pasta',
+  ];
+  return perishableKeywords.some((kw) => text.includes(kw));
+}
+
+function extractProductItems(res: any): ProductStockItem[] {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.content)) return res.content;
+  if (Array.isArray(res.items)) return res.items;
+  if (Array.isArray(res.data)) return res.data;
+  if (Array.isArray(res.products)) return res.products;
+  if (res.product && typeof res.product === 'object') return [res.product];
+  return [];
+}
+
 export const StocksScreen: React.FC<{
+  initialBarcode?: string | null;
+  onClearInitialBarcode?: () => void;
   onOpenServerSettings: () => void;
   onOpenBranchPicker: () => void;
-}> = ({ onOpenServerSettings, onOpenBranchPicker }) => {
+  onNavigateToProductCreate?: (prefill?: { barcode: string; title?: string; brand?: string; category?: string }) => void;
+}> = ({
+  initialBarcode,
+  onClearInitialBarcode,
+  onOpenServerSettings,
+  onOpenBranchPicker,
+  onNavigateToProductCreate,
+}) => {
   const { activeBranchId, activeBranchName } = useAuth();
   const { serverUrl } = useServer();
 
@@ -63,10 +124,15 @@ export const StocksScreen: React.FC<{
   const [expandedProducts, setExpandedProducts] = useState<Record<string, boolean>>({});
   const [scannerVisible, setScannerVisible] = useState(false);
 
-  const handleScannedBarcode = (barcode: string) => {
-    setSearchQuery(barcode);
-    setPage(0);
-  };
+  // Taranan Ürünün Tam Detaylarını Gösteren Modal Durumu
+  const [scannedProductDetail, setScannedProductDetail] = useState<{
+    product: ProductStockItem;
+    catalogData?: BarcodeSearchResult | null;
+  } | null>(null);
+
+  // Sadece açık katalogda bulunan (stokta henüz olmayan) ürün bilgisi
+  const [scannedCatalogOnly, setScannedCatalogOnly] = useState<BarcodeSearchResult | null>(null);
+  const [barcodeSearchNotice, setBarcodeSearchNotice] = useState<string | null>(null);
 
   const handleCopyBarcode = (barcode: string) => {
     if (!barcode) return;
@@ -81,12 +147,149 @@ export const StocksScreen: React.FC<{
     setExpandedProducts((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  // Kapsamlı Barkod Arama Motoru
+  const performBarcodeSearch = async (rawBarcode: string) => {
+    const clean = rawBarcode.trim();
+    if (!clean) return;
+
+    setSearchQuery(clean);
+    setStockStatusFilter('all'); // Filtrelerin taranan ürünü gizlemesini engelle
+    setPage(0);
+    setLoading(true);
+    setError(null);
+    setScannedCatalogOnly(null);
+    setBarcodeSearchNotice(`"${clean}" barkodu aranıyor...`);
+
+    try {
+      let stockItems: ProductStockItem[] = [];
+
+      // 1. Limon Stoklarında Ara
+      // A) Aktif şube parametresiyle ara (eğer seçilmişse)
+      const primaryParams: any = {
+        barcode: clean,
+        search: clean,
+        size: 50,
+        page: 0,
+      };
+      if (activeBranchId && activeBranchId !== 'all') {
+        primaryParams.storeId = activeBranchId;
+      }
+
+      const res = await stocksService.getStocks(primaryParams).catch(() => null);
+      stockItems = extractProductItems(res);
+
+      // B) Eğer aktif şubede bulunamadıysa, TÜM şubelerde ara
+      if (stockItems.length === 0 && activeBranchId && activeBranchId !== 'all') {
+        const allBranchParams: any = {
+          barcode: clean,
+          search: clean,
+          size: 50,
+          page: 0,
+        };
+        const allRes = await stocksService.getStocks(allBranchParams).catch(() => null);
+        stockItems = extractProductItems(allRes);
+      }
+
+      // C) Eğer hala sonuç yoksa all: true ile genişletilmiş katalog sorgusu yap
+      if (stockItems.length === 0) {
+        const wideRes = await stocksService.getStocks({ barcode: clean, all: true, size: 50, page: 0 }).catch(() => null);
+        stockItems = extractProductItems(wideRes);
+      }
+
+      // 2. Açık Katalogda Eşzamanlı Doğrulama & Görsel Zenginleştirme
+      let catalogRes: BarcodeSearchResult | null = null;
+      try {
+        catalogRes = await barcodeService.searchBarcode(clean);
+      } catch {
+        // Sessiz devam
+      }
+
+      // 3. Sonuçları Eşleştir
+      let matchedProduct = stockItems.find(
+        (p) =>
+          p.barcode?.trim() === clean ||
+          p.barcode?.trim()?.replace(/^0+/, '') === clean.replace(/^0+/, '')
+      ) || (stockItems.length > 0 ? stockItems[0] : null);
+
+      if (matchedProduct) {
+        // Eksik alanları açık katalogdan tamamla (görsel, marka, kategori)
+        if (catalogRes && catalogRes.found) {
+          matchedProduct = {
+            ...matchedProduct,
+            imageUrl: matchedProduct.imageUrl || catalogRes.imageUrl || null,
+            brand: matchedProduct.brand || catalogRes.brand || null,
+            category: matchedProduct.category || catalogRes.category || null,
+          };
+        }
+
+        const otherItems = stockItems.filter((p) => p.id !== matchedProduct!.id);
+        const finalList = [matchedProduct, ...otherItems];
+        setProducts(finalList);
+        setTotalElements(finalList.length);
+        setTotalPages(1);
+
+        // Şube dağılımını otomatik aç
+        setExpandedProducts((prev) => ({ ...prev, [matchedProduct!.id]: true }));
+
+        // Taranan ürünün tüm bilgilerini içeren detay modalını aç!
+        setScannedProductDetail({
+          product: matchedProduct,
+          catalogData: catalogRes,
+        });
+        setBarcodeSearchNotice(null);
+      } else if (catalogRes && catalogRes.found) {
+        // Limon stoklarında yok ama açık katalogda bulundu!
+        setProducts([]);
+        setTotalElements(0);
+        setTotalPages(1);
+        setScannedCatalogOnly(catalogRes);
+        setBarcodeSearchNotice(null);
+      } else {
+        // Hiçbir yerde bulunamadı
+        setProducts([]);
+        setTotalElements(0);
+        setTotalPages(1);
+        setScannedCatalogOnly({
+          found: false,
+          barcode: clean,
+          message: `Barkod (${clean}) Limon stoklarında ve açık katalogda eşleşmedi.`,
+        });
+        setBarcodeSearchNotice(null);
+      }
+    } catch (err: any) {
+      console.error('Barkod tarama hatası:', err.message);
+      setError('Barkod sorgulanırken sunucu hatası oluştu.');
+      setBarcodeSearchNotice(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleScannedBarcode = (barcode: string) => {
+    performBarcodeSearch(barcode);
+  };
+
+  // Dışarıdan gelen initialBarcode varsa hemen ara
+  useEffect(() => {
+    if (initialBarcode && initialBarcode.trim()) {
+      performBarcodeSearch(initialBarcode.trim());
+      if (onClearInitialBarcode) {
+        onClearInitialBarcode();
+      }
+    }
+  }, [initialBarcode]);
+
+  // Genel Liste Getirme
   const fetchStocks = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
+    setScannedCatalogOnly(null);
 
     try {
+      const cleanSearch = searchQuery.trim();
+      const isBarcodeLike = cleanSearch.length >= 3 && /^[0-9A-Za-z_-]+$/.test(cleanSearch) && /\d/.test(cleanSearch);
+
       const params: any = {
         size: pageSize,
         page,
@@ -95,24 +298,33 @@ export const StocksScreen: React.FC<{
       if (activeBranchId && activeBranchId !== 'all') {
         params.storeId = activeBranchId;
       }
-      if (searchQuery.trim()) {
-        params.search = searchQuery.trim();
+      if (cleanSearch) {
+        params.search = cleanSearch;
+        if (isBarcodeLike) {
+          params.barcode = cleanSearch;
+        }
       }
 
       const res: StocksApiResponse = await stocksService.getStocks(params);
+      const items = extractProductItems(res);
 
-      if (res && Array.isArray(res.content)) {
-        let items = res.content;
-        if (stockStatusFilter === 'critical') {
-          items = items.filter((p) => p.totalStock > 0 && p.totalStock <= 5);
-        } else if (stockStatusFilter === 'out_of_stock') {
-          items = items.filter((p) => p.totalStock === 0);
-        } else if (stockStatusFilter === 'in_stock') {
-          items = items.filter((p) => p.totalStock > 5);
+      if (items.length > 0) {
+        let filtered = items;
+        // Eğer arama yapılmışsa filtreleri zorunlu tutma, aksi halde uygula
+        if (!cleanSearch) {
+          if (stockStatusFilter === 'critical') {
+            filtered = items.filter((p) => p.totalStock > 0 && p.totalStock <= 5);
+          } else if (stockStatusFilter === 'out_of_stock') {
+            filtered = items.filter((p) => p.totalStock === 0);
+          } else if (stockStatusFilter === 'in_stock') {
+            filtered = items.filter((p) => p.totalStock > 5);
+          } else if (stockStatusFilter === 'perishable') {
+            filtered = items.filter(isPerishableProduct);
+          }
         }
 
-        setProducts(items);
-        setTotalElements(res.totalElements || items.length);
+        setProducts(filtered);
+        setTotalElements(res.totalElements || filtered.length);
         setTotalPages(res.totalPages || 1);
 
         if (res.globalStats) {
@@ -122,7 +334,27 @@ export const StocksScreen: React.FC<{
           setCatalogTotal(res.catalogTotal);
         }
       } else {
+        // Eğer arama yapıldı ve sonuç boş geldiyse ve şube seçiliyse şubesiz tekrar dene
+        if (cleanSearch && activeBranchId && activeBranchId !== 'all') {
+          const fallbackParams: any = {
+            size: pageSize,
+            page: 0,
+            search: cleanSearch,
+          };
+          if (isBarcodeLike) fallbackParams.barcode = cleanSearch;
+          const fallbackRes = await stocksService.getStocks(fallbackParams).catch(() => null);
+          const fallbackItems = extractProductItems(fallbackRes);
+          if (fallbackItems.length > 0) {
+            setProducts(fallbackItems);
+            setTotalElements(fallbackItems.length);
+            setTotalPages(1);
+            return;
+          }
+        }
+
         setProducts([]);
+        setTotalElements(0);
+        setTotalPages(1);
       }
     } catch (err: any) {
       console.error('Stok listesi hatası:', err.message);
@@ -134,7 +366,10 @@ export const StocksScreen: React.FC<{
   }, [activeBranchId, searchQuery, stockStatusFilter, page, pageSize]);
 
   useEffect(() => {
-    fetchStocks();
+    // initialBarcode varken varsayılan fetchStocks'un ezmesini önle
+    if (!initialBarcode) {
+      fetchStocks();
+    }
   }, [fetchStocks]);
 
   const renderProductItem = ({ item }: { item: ProductStockItem }) => {
@@ -146,20 +381,29 @@ export const StocksScreen: React.FC<{
     return (
       <Card style={styles.productCard}>
         <View style={styles.cardMainRow}>
-          {/* Ürün Görseli */}
-          <View style={styles.imageBox}>
+          {/* Ürün Görseli - Tıklandığında Tüm Bilgileri Göster */}
+          <TouchableOpacity
+            style={styles.imageBox}
+            activeOpacity={0.8}
+            onPress={() => setScannedProductDetail({ product: item, catalogData: null })}
+          >
             {item.imageUrl ? (
-              <Image source={{ uri: item.imageUrl }} style={styles.productImg} resizeMode="cover" />
+              <Image source={{ uri: item.imageUrl }} style={styles.productImg} resizeMode="contain" />
             ) : (
               <MaterialCommunityIcons name="package-variant-closed" size={24} color={colors.textMuted} />
             )}
-          </View>
+          </TouchableOpacity>
 
           {/* Ürün Bilgileri */}
           <View style={styles.infoCol}>
-            <Text style={styles.productTitle} numberOfLines={2}>
-              {item.title}
-            </Text>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setScannedProductDetail({ product: item, catalogData: null })}
+            >
+              <Text style={styles.productTitle} numberOfLines={2}>
+                {item.title}
+              </Text>
+            </TouchableOpacity>
 
             {/* Barkod ve Kopyalama */}
             <View style={styles.barcodeRow}>
@@ -179,6 +423,11 @@ export const StocksScreen: React.FC<{
                 </Text>
               </TouchableOpacity>
               {item.brand && <Text style={styles.brandText}>• {item.brand}</Text>}
+              {isPerishableProduct(item) && (
+                <View style={styles.perishableBadge}>
+                  <Text style={styles.perishableBadgeText}>SKT</Text>
+                </View>
+              )}
             </View>
 
             {/* Stok ve Fiyat Rozetleri */}
@@ -211,14 +460,25 @@ export const StocksScreen: React.FC<{
                 </Text>
               </View>
 
-              <TouchableOpacity
-                onPress={() => setEditingProduct(item)}
-                style={styles.priceActionBtn}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons name="currency-try" size={12} color="#FFFFFF" />
-                <Text style={styles.priceActionText}>Fiyat Güncelle</Text>
-              </TouchableOpacity>
+              <View style={styles.cardActionsGroup}>
+                <TouchableOpacity
+                  onPress={() => setScannedProductDetail({ product: item, catalogData: null })}
+                  style={styles.detailActionBtn}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="eye-outline" size={12} color="#111827" />
+                  <Text style={styles.detailActionText}>Tüm Bilgiler</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setEditingProduct(item)}
+                  style={styles.priceActionBtn}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons name="currency-try" size={12} color="#FFFFFF" />
+                  <Text style={styles.priceActionText}>Fiyat Güncelle</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -230,7 +490,7 @@ export const StocksScreen: React.FC<{
           activeOpacity={0.7}
         >
           <Text style={styles.branchExpandTitle}>
-            ŞUBE BAZLI FİYAT & STOK DAĞILIMI
+            ŞUBE BAZLI FİYAT & STOK DAĞILIMI (12 ŞUBE)
           </Text>
           <MaterialCommunityIcons
             name={isExpanded ? 'chevron-up' : 'chevron-down'}
@@ -305,11 +565,23 @@ export const StocksScreen: React.FC<{
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            onSubmitEditing={() => fetchStocks()}
+            onSubmitEditing={() => {
+              if (searchQuery.trim().length >= 3 && /\d/.test(searchQuery.trim())) {
+                performBarcodeSearch(searchQuery.trim());
+              } else {
+                fetchStocks();
+              }
+            }}
             returnKeyType="search"
           />
           {searchQuery ? (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 2 }}>
+            <TouchableOpacity
+              onPress={() => {
+                setSearchQuery('');
+                setScannedCatalogOnly(null);
+              }}
+              style={{ padding: 2 }}
+            >
               <MaterialCommunityIcons name="close-circle" size={14} color={colors.textMuted} />
             </TouchableOpacity>
           ) : null}
@@ -349,11 +621,89 @@ export const StocksScreen: React.FC<{
         })}
       </View>
 
+      {/* Barkod Bildirim Şeridi */}
+      {barcodeSearchNotice && (
+        <View style={styles.noticeBar}>
+          <ActivityIndicator size="small" color="#FFFFFF" />
+          <Text style={styles.noticeText}>{barcodeSearchNotice}</Text>
+        </View>
+      )}
+
+      {/* Sadece Açık Katalogda Bulunan Ürün Bildirimi */}
+      {scannedCatalogOnly && (
+        <View style={styles.catalogOnlyCard}>
+          <View style={styles.catalogOnlyHeader}>
+            <View style={styles.catalogOnlyBadge}>
+              <MaterialCommunityIcons name="information" size={14} color="#1D4ED8" />
+              <Text style={styles.catalogOnlyBadgeText}>AÇIK KATALOG KAYDI</Text>
+            </View>
+            <TouchableOpacity onPress={() => setScannedCatalogOnly(null)}>
+              <MaterialCommunityIcons name="close" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {scannedCatalogOnly.found ? (
+            <View style={styles.catalogOnlyContent}>
+              <Text style={styles.catalogOnlyTitle}>{scannedCatalogOnly.title}</Text>
+              <Text style={styles.catalogOnlyDesc}>
+                Bu ürün ulusal barkod kataloğunda kayıtlı ancak henüz Limon stoklarınıza eklenmemiş.
+              </Text>
+
+              <View style={styles.catalogMetaRow}>
+                <Text style={styles.catalogMetaText}>Barkod: {scannedCatalogOnly.barcode}</Text>
+                {scannedCatalogOnly.brand && (
+                  <Text style={styles.catalogMetaText}>• Marka: {scannedCatalogOnly.brand}</Text>
+                )}
+              </View>
+
+              {onNavigateToProductCreate && (
+                <Button
+                  title="Bu Ürünü Limon Stoklarına Ekle"
+                  variant="primary"
+                  size="sm"
+                  onPress={() =>
+                    onNavigateToProductCreate({
+                      barcode: scannedCatalogOnly.barcode,
+                      title: scannedCatalogOnly.title || '',
+                      brand: scannedCatalogOnly.brand || '',
+                      category: scannedCatalogOnly.category || '',
+                    })
+                  }
+                  icon={<MaterialCommunityIcons name="plus-box" size={14} color="#FFFFFF" />}
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </View>
+          ) : (
+            <View style={styles.catalogOnlyContent}>
+              <Text style={styles.catalogOnlyTitle}>Barkod Kaydı Bulunamadı</Text>
+              <Text style={styles.catalogOnlyDesc}>
+                {scannedCatalogOnly.message || 'Girilen barkod hiçbir veri tabanında eşleşmedi.'}
+              </Text>
+              {onNavigateToProductCreate && (
+                <Button
+                  title="Yeni Ürün Olarak Tanımla"
+                  variant="outline"
+                  size="sm"
+                  onPress={() =>
+                    onNavigateToProductCreate({
+                      barcode: scannedCatalogOnly.barcode,
+                    })
+                  }
+                  icon={<MaterialCommunityIcons name="plus" size={14} color={colors.textPrimary} />}
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </View>
+          )}
+        </View>
+      )}
+
       {/* 4. Liste / Yükleniyor / Hata */}
       {loading && !refreshing ? (
         <View style={styles.loadingBox}>
           <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={styles.loadingText}>Stok listesi yükleniyor...</Text>
+          <Text style={styles.loadingText}>Stok bilgileri ve barkod verisi yükleniyor...</Text>
         </View>
       ) : error ? (
         <ErrorView
@@ -410,6 +760,21 @@ export const StocksScreen: React.FC<{
         />
       )}
 
+      {/* Taranan Ürünün Tüm Bilgilerini Gösteren Kapsamlı Modal */}
+      <ScannedProductDetailModal
+        visible={!!scannedProductDetail}
+        product={scannedProductDetail?.product || null}
+        catalogData={scannedProductDetail?.catalogData || null}
+        onClose={() => setScannedProductDetail(null)}
+        onUpdatePrice={(prod) => {
+          setEditingProduct(prod);
+        }}
+        onScanAgain={() => {
+          setScannedProductDetail(null);
+          setScannerVisible(true);
+        }}
+      />
+
       {/* Fiyat Güncelleme Modalı */}
       {editingProduct && (
         <PriceUpdateModal
@@ -429,7 +794,7 @@ export const StocksScreen: React.FC<{
         onClose={() => setScannerVisible(false)}
         onScan={handleScannedBarcode}
         title="STOK BARKODU TARA"
-        subtitle="Barkodu hizalayarak ürünü anında bulun"
+        subtitle="Barkodu hizalayarak ürünü ve tüm şube bilgilerini anında getirin"
       />
     </View>
   );
@@ -555,6 +920,70 @@ const styles = StyleSheet.create({
   filterTabTextActive: {
     color: '#FFFFFF',
   },
+  noticeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1E293B',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  noticeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  catalogOnlyCard: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginHorizontal: 8,
+    marginTop: 8,
+    padding: 10,
+    borderRadius: layout.radiusSm,
+  },
+  catalogOnlyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  catalogOnlyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  catalogOnlyBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#1D4ED8',
+    letterSpacing: 0.3,
+  },
+  catalogOnlyContent: {
+    marginTop: 2,
+  },
+  catalogOnlyTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E3A8A',
+  },
+  catalogOnlyDesc: {
+    fontSize: 11,
+    color: '#1E40AF',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  catalogMetaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  catalogMetaText: {
+    fontSize: 10,
+    color: '#3B82F6',
+    fontWeight: '600',
+  },
   loadingBox: {
     padding: 30,
     alignItems: 'center',
@@ -635,6 +1064,19 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: '#9CA3AF',
   },
+  perishableBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  perishableBadgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#B45309',
+  },
   stockStatusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -671,6 +1113,27 @@ const styles = StyleSheet.create({
   },
   textRed: {
     color: '#B91C1C',
+  },
+  cardActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  detailActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    borderRadius: 2,
+  },
+  detailActionText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#111827',
   },
   priceActionBtn: {
     flexDirection: 'row',

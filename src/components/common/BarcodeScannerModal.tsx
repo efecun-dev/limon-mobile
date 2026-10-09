@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -35,21 +35,26 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [permission, requestPermission] = useCameraPermissions();
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [isScanned, setIsScanned] = useState(false);
+  const isScanningLockedRef = useRef(false);
 
   // Reset scan state when modal opens
   useEffect(() => {
     if (visible) {
+      isScanningLockedRef.current = false;
       setIsScanned(false);
       setTorchEnabled(false);
+    } else {
+      isScanningLockedRef.current = true;
     }
   }, [visible]);
 
-  const handleBarcodeScanned = ({ data, type }: { data: string; type?: string }) => {
-    if (isScanned || !data) return;
+  const handleBarcodeScanned = ({ data }: { data: string; type?: string }) => {
+    if (isScanningLockedRef.current || isScanned || !data) return;
 
     const cleanBarcode = data.trim();
     if (cleanBarcode.length < 3) return; // avoid false positive noise
 
+    isScanningLockedRef.current = true;
     setIsScanned(true);
 
     // Haptic feedback
@@ -59,8 +64,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       // Haptics optional
     }
 
-    onScan(cleanBarcode);
     onClose();
+    onScan(cleanBarcode);
   };
 
   return (

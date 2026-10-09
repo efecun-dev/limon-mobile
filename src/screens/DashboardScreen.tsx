@@ -49,6 +49,7 @@ export const DashboardScreen: React.FC<{
   onNavigateToClaims?: () => void;
   onNavigateToReviews?: () => void;
   onNavigateToLevels?: () => void;
+  onNavigateToCancellations?: () => void;
 }> = ({
   onOpenServerSettings,
   onNavigateToOrders,
@@ -57,6 +58,7 @@ export const DashboardScreen: React.FC<{
   onNavigateToClaims,
   onNavigateToReviews,
   onNavigateToLevels,
+  onNavigateToCancellations,
 }) => {
   const { activeBranchId } = useAuth();
   const { serverUrl } = useServer();
@@ -563,10 +565,15 @@ export const DashboardScreen: React.FC<{
             <Text style={styles.stripLabel}>ALTERNATİF %</Text>
           </View>
           <View style={styles.stripDivider} />
-          <View style={styles.stripItem}>
+          <TouchableOpacity
+            style={styles.stripItem}
+            onPress={onNavigateToCancellations}
+            disabled={!onNavigateToCancellations}
+            activeOpacity={0.7}
+          >
             <Text style={[styles.stripVal, { color: '#EF4444' }]}>%{stats.cancelRate.toFixed(1)}</Text>
-            <Text style={styles.stripLabel}>İPTAL %</Text>
-          </View>
+            <Text style={styles.stripLabel}>İPTAL % →</Text>
+          </TouchableOpacity>
           <View style={styles.stripDivider} />
           <View style={styles.stripItem}>
             <Text style={[styles.stripVal, { color: '#F97316' }]}>{stats.unansweredReviews}</Text>
@@ -597,9 +604,17 @@ export const DashboardScreen: React.FC<{
           <Card style={styles.kpiCard}>
             <View style={styles.kpiCardTop}>
               <Text style={styles.kpiCardLabel}>BUGÜNKÜ CİRO</Text>
-              <Text style={styles.kpiCardCancelText}>
-                İptal: {stats.cancelledRevenue.toLocaleString('tr-TR')} ₺
-              </Text>
+              {onNavigateToCancellations ? (
+                <TouchableOpacity onPress={onNavigateToCancellations} activeOpacity={0.7}>
+                  <Text style={[styles.kpiCardCancelText, { textDecorationLine: 'underline' }]}>
+                    İptal: {stats.cancelledRevenue.toLocaleString('tr-TR')} ₺ →
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.kpiCardCancelText}>
+                  İptal: {stats.cancelledRevenue.toLocaleString('tr-TR')} ₺
+                </Text>
+              )}
             </View>
             <Text style={styles.kpiCardBigValue}>
               {stats.todayRevenue.toLocaleString('tr-TR')} ₺
@@ -613,9 +628,17 @@ export const DashboardScreen: React.FC<{
           <Card style={styles.kpiCard}>
             <View style={styles.kpiCardTop}>
               <Text style={styles.kpiCardLabel}>ALTERNATİF GÖNDERİM</Text>
-              <Text style={styles.kpiCardCancelText}>
-                İptal: %{stats.cancelRate.toFixed(1)}
-              </Text>
+              {onNavigateToCancellations ? (
+                <TouchableOpacity onPress={onNavigateToCancellations} activeOpacity={0.7}>
+                  <Text style={[styles.kpiCardCancelText, { textDecorationLine: 'underline' }]}>
+                    İptal: %{stats.cancelRate.toFixed(1)} →
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.kpiCardCancelText}>
+                  İptal: %{stats.cancelRate.toFixed(1)}
+                </Text>
+              )}
             </View>
             <Text style={[styles.kpiCardBigValue, { color: '#F59E0B' }]}>
               %{stats.altRate.toFixed(1)}

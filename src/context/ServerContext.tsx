@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   apiClient,
@@ -29,18 +29,7 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
 
-  useEffect(() => {
-    async function loadConfig() {
-      const cfg = await initializeApiClient();
-      setServerUrl(cfg.serverUrl);
-      setServerKey(cfg.serverKey);
-      // İlk açılışta bağlantıyı dene
-      testConnection(cfg.serverUrl, cfg.serverKey);
-    }
-    loadConfig();
-  }, []);
-
-  const testConnection = async (targetUrl?: string, targetKey?: string) => {
+  const testConnection = useCallback(async (targetUrl?: string, targetKey?: string) => {
     setIsChecking(true);
     const start = Date.now();
     try {
@@ -84,7 +73,18 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         error: err.response?.data?.message || err.message || 'Sunucuya bağlanılamadı.',
       };
     }
-  };
+  }, [serverUrl, serverKey]);
+
+  useEffect(() => {
+    async function loadConfig() {
+      const cfg = await initializeApiClient();
+      setServerUrl(cfg.serverUrl);
+      setServerKey(cfg.serverKey);
+      // İlk açılışta bağlantıyı dene
+      testConnection(cfg.serverUrl, cfg.serverKey);
+    }
+    loadConfig();
+  }, [testConnection]);
 
   const saveConfig = async (newUrl: string, newKey: string): Promise<boolean> => {
     try {
