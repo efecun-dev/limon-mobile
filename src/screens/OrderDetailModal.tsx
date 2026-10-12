@@ -7,13 +7,10 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
-  Alert,
   Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors, layout, typography } from '../theme/colors';
-import { OrderPackage } from '../types/api';
-import { Badge } from '../components/common/Badge';
+import { colors } from '../theme/colors';
 import { Card } from '../components/common/Card';
 import { getCancellationReason } from './OrdersScreen';
 
@@ -278,9 +275,16 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                   const quantity = line.items?.length || line.amount || 1;
                   const unitPrice = line.price || 0;
                   const totalPrice = unitPrice * quantity;
-                  const altCount = line.items?.filter((it: any) => it.isAlternative).length || 0;
-                  const cancCount = line.items?.filter((it: any) => it.isCancelled).length || 0;
-                  const isCauseOfCancel = line.items?.some((it: any) => it.causedCancel);
+                  
+                  const countFromAltItems = line.items?.filter((it: any) => it.isAlternative).length || 0;
+                  const isAltLine = Boolean(line.isAlternative || countFromAltItems > 0);
+                  const altItemsCount = countFromAltItems > 0 ? countFromAltItems : (line.isAlternative ? quantity : 0);
+
+                  const countFromCancelledItems = line.items?.filter((it: any) => it.isCancelled).length || 0;
+                  const isCancelledLine = Boolean(line.causedCancel || line.isCancelled || countFromCancelledItems > 0);
+                  const cancelledItemsCount = countFromCancelledItems > 0 ? countFromCancelledItems : (line.causedCancel ? quantity : 0);
+                  const isCauseOfCancel = Boolean(line.causedCancel || line.items?.some((it: any) => it.causedCancel));
+
                   const img = getLineImage(line);
                   const prevStock = getLinePreviousStock(line);
 
@@ -289,29 +293,48 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                       key={idx}
                       style={[
                         styles.itemRow,
+                        isAltLine && styles.itemRowAlt,
+                        isCancelledLine && !isAltLine && styles.itemRowCancelled,
                         isCauseOfCancel && styles.itemRowCancelCause,
                       ]}
                     >
                       {/* Ürün Fotoğrafı */}
                       <TouchableOpacity
-                        style={styles.itemImageBtn}
+                        style={[
+                          styles.itemImageBtn,
+                          isAltLine && { borderColor: '#F59E0B', borderWidth: 1 },
+                        ]}
                         onPress={() => img && setSelectedImage(img)}
                         activeOpacity={img ? 0.7 : 1}
                       >
                         {img ? (
                           <Image source={{ uri: img }} style={styles.itemImage} resizeMode="contain" />
                         ) : (
-                          <View style={styles.itemImagePlaceholder}>
-                            <MaterialCommunityIcons name="package-variant-closed" size={18} color="#9CA3AF" />
+                          <View style={[styles.itemImagePlaceholder, isAltLine && { backgroundColor: '#FEF3C7' }]}>
+                            <MaterialCommunityIcons name="package-variant-closed" size={18} color={isAltLine ? '#D97706' : '#9CA3AF'} />
                           </View>
                         )}
                       </TouchableOpacity>
 
                       <View style={{ flex: 2, paddingLeft: 6 }}>
-                        <Text style={styles.itemName}>
+                        <Text
+                          style={[
+                            styles.itemName,
+                            isAltLine && styles.itemNameAlt,
+                            isCancelledLine && !isAltLine && styles.itemNameCancelled,
+                          ]}
+                        >
                           {line.product?.name || line.product?.productSaleName || 'Ürün'}
                         </Text>
                         <Text style={styles.itemBarcode}>{line.barcode || '-'}</Text>
+
+                        {/* Alternatif Açıklaması */}
+                        {isAltLine && (
+                          <Text style={styles.altItemNoticeText}>
+                            Müşteriye alternatif olarak temin edildi
+                            {line.alternativeReason ? ` · ${line.alternativeReason}` : ''}
+                          </Text>
+                        )}
 
                         {/* Önceki Stok Bilgisi Rozeti */}
                         {prevStock !== null && (
@@ -325,14 +348,20 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
 
                         {/* Kalem Rozetleri */}
                         <View style={styles.lineBadgesRow}>
-                          {altCount > 0 && (
+                          {isAltLine && (
                             <View style={styles.badgeAmber}>
-                              <Text style={styles.badgeAmberText}>{altCount} Alternatif</Text>
+                              <MaterialCommunityIcons name="swap-horizontal" size={10} color="#B45309" />
+                              <Text style={styles.badgeAmberText}>
+                                {altItemsCount === quantity ? 'Alternatif Ürün' : `${altItemsCount}/${quantity} Alt`}
+                              </Text>
                             </View>
                           )}
-                          {cancCount > 0 && (
+                          {isCancelledLine && !isAltLine && (
                             <View style={styles.badgeRed}>
-                              <Text style={styles.badgeRedText}>{cancCount} İptal</Text>
+                              <MaterialCommunityIcons name="close" size={10} color="#B91C1C" />
+                              <Text style={styles.badgeRedText}>
+                                {cancelledItemsCount === quantity ? 'Tedarik Edilemedi' : `${cancelledItemsCount}/${quantity} İptal`}
+                              </Text>
                             </View>
                           )}
                           {isCauseOfCancel && (
@@ -346,11 +375,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                       </View>
 
                       <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                        <Text style={styles.itemUnitPrice}>{quantity} × {unitPrice.toFixed(2)} ₺</Text>
+                        <Text style={[styles.itemUnitPrice, isCancelledLine && !isAltLine && styles.lineThroughText]}>
+                          {quantity} × {unitPrice.toFixed(2)} ₺
+                        </Text>
                       </View>
 
                       <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                        <Text style={styles.itemTotalPrice}>{totalPrice.toFixed(2)} ₺</Text>
+                        <Text style={[styles.itemTotalPrice, isCancelledLine && !isAltLine && styles.lineThroughText]}>
+                          {totalPrice.toFixed(2)} ₺
+                        </Text>
                       </View>
                     </View>
                   );
@@ -763,8 +796,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
+  },
+  itemRowAlt: {
+    backgroundColor: '#FFFBEB',
+    borderLeftWidth: 3,
+    borderLeftColor: '#F59E0B',
+  },
+  itemRowCancelled: {
+    backgroundColor: '#FEF2F2',
+    borderLeftWidth: 3,
+    borderLeftColor: '#EF4444',
   },
   itemRowCancelCause: {
     backgroundColor: '#FEF2F2',
@@ -780,6 +824,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 'bold',
     color: '#111827',
+  },
+  itemNameAlt: {
+    color: '#78350F',
+    fontWeight: '900',
+  },
+  itemNameCancelled: {
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+  },
+  altItemNoticeText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#B45309',
+    marginTop: 1,
+  },
+  lineThroughText: {
+    textDecorationLine: 'line-through',
+    color: '#9CA3AF',
   },
   itemBarcode: {
     fontSize: 9,

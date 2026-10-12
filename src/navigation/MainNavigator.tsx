@@ -29,6 +29,7 @@ import { MoreMenuScreen } from '../screens/MoreMenuScreen';
 import { RawOrdersModal } from '../screens/RawOrdersModal';
 import { CancellationAnalysisScreen } from '../screens/CancellationAnalysisScreen';
 import { PriceAnomalyRadarScreen } from '../screens/PriceAnomalyRadarScreen';
+import { BulkPriceUpdateScreen } from '../screens/BulkPriceUpdateScreen';
 
 type MainTabKey = 'dashboard' | 'orders' | 'revenue' | 'levels' | 'stocks' | 'more';
 type SubScreenKey =
@@ -39,6 +40,7 @@ type SubScreenKey =
   | 'barcode'
   | 'cancellations'
   | 'price_radar'
+  | 'bulk_price'
   | null;
 
 interface TabItem {
@@ -253,7 +255,22 @@ export const MainNavigator: React.FC = () => {
             <Text style={styles.subHeaderTitle}>Fiyat Anomali Radarı (12 Şube)</Text>
             <View style={{ width: 40 }} />
           </View>
-          <PriceAnomalyRadarScreen onOpenServerSettings={() => setShowServerModal(true)} />
+          <PriceAnomalyRadarScreen
+            onOpenServerSettings={() => setShowServerModal(true)}
+            onNavigateToBulkPrice={() => setSubScreen('bulk_price')}
+          />
+        </View>
+      );
+    }
+
+    if (subScreen === 'bulk_price') {
+      return (
+        <View style={styles.subScreenContainer}>
+          <BulkPriceUpdateScreen
+            onOpenServerSettings={() => setShowServerModal(true)}
+            onNavigateToPriceRadar={() => setSubScreen('price_radar')}
+            onBack={() => setSubScreen(null)}
+          />
         </View>
       );
     }
@@ -310,6 +327,7 @@ export const MainNavigator: React.FC = () => {
             onNavigateToRawOrders={() => setShowRawOrdersModal(true)}
             onNavigateToCancellations={() => setSubScreen('cancellations')}
             onNavigateToPriceRadar={() => setSubScreen('price_radar')}
+            onNavigateToBulkPrice={() => setSubScreen('bulk_price')}
           />
         );
       default:

@@ -3,6 +3,7 @@ import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   FlatList,
   TouchableOpacity,
   RefreshControl,
@@ -63,13 +64,15 @@ export interface AnomalyItem {
 
 export const PriceAnomalyRadarScreen: React.FC<{
   onOpenServerSettings?: () => void;
-}> = ({ onOpenServerSettings }) => {
+  onNavigateToBulkPrice?: () => void;
+}> = ({ onOpenServerSettings, onNavigateToBulkPrice }) => {
   const [products, setProducts] = useState<ProductStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState('ALL');
   const [filterType, setFilterType] = useState<'all' | 'critical' | 'missing'>('all');
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [editingProduct, setEditingProduct] = useState<ProductStockItem | null>(null);
@@ -96,6 +99,16 @@ export const PriceAnomalyRadarScreen: React.FC<{
   useEffect(() => {
     fetchStocks();
   }, [fetchStocks]);
+
+  const availableBrands = useMemo(() => {
+    const bSet = new Set<string>();
+    products.forEach((p) => {
+      if (p.brand && p.brand.trim()) {
+        bSet.add(p.brand.trim());
+      }
+    });
+    return Array.from(bSet).sort((a, b) => a.localeCompare(b, 'tr-TR'));
+  }, [products]);
 
   const handleCopyBarcode = (barcode: string) => {
     if (!barcode) return;
@@ -199,6 +212,10 @@ export const PriceAnomalyRadarScreen: React.FC<{
       filtered = filtered.filter((item) => item.undefinedCount > 0);
     }
 
+    if (selectedBrand !== 'ALL') {
+      filtered = filtered.filter((item) => item.brand === selectedBrand);
+    }
+
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       filtered = filtered.filter(
@@ -217,7 +234,7 @@ export const PriceAnomalyRadarScreen: React.FC<{
         missingPriceCount,
       },
     };
-  }, [products, filterType, searchQuery]);
+  }, [products, filterType, selectedBrand, searchQuery]);
 
   const renderItem = ({ item }: { item: AnomalyItem }) => {
     const isExpanded = !!expandedItems[item.barcode];
@@ -369,7 +386,19 @@ export const PriceAnomalyRadarScreen: React.FC<{
             <MaterialCommunityIcons name="radar" size={16} color="#F59E0B" />
             <Text style={styles.subHeaderTitle}>FİYAT ANOMALİ RADARI</Text>
           </View>
-          <Text style={styles.subHeaderSubtitle}>12 Şube Arası Çelişki Tespiti</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {onNavigateToBulkPrice && (
+              <TouchableOpacity
+                onPress={onNavigateToBulkPrice}
+                style={styles.headerBulkBtn}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="layers-triple-outline" size={13} color="#FFFFFF" />
+                <Text style={styles.headerBulkBtnText}>Toplu Güncelle</Text>
+              </TouchableOpacity>
+            )}
+            <Text style={styles.subHeaderSubtitle}>12 Şube</Text>
+          </View>
         </View>
 
         {/* 3 KPI Kutusu */}
@@ -422,7 +451,7 @@ export const PriceAnomalyRadarScreen: React.FC<{
         </TouchableOpacity>
       </View>
 
-      {/* 3. Arama Çubuğu */}
+      {/* 3. Arama Çubuğu & Marka Çipleri */}
       <View style={styles.searchBar}>
         <MaterialCommunityIcons name="magnify" size={16} color={colors.textMuted} />
         <TextInput
@@ -438,6 +467,35 @@ export const PriceAnomalyRadarScreen: React.FC<{
           </TouchableOpacity>
         ) : null}
       </View>
+
+      {/* Marka Filtre Çipleri */}
+      {availableBrands.length > 0 && (
+        <View style={styles.brandChipsBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.brandChipsScroll}>
+            <TouchableOpacity
+              onPress={() => setSelectedBrand('ALL')}
+              style={[styles.brandChip, selectedBrand === 'ALL' && styles.brandChipActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.brandChipText, selectedBrand === 'ALL' && styles.brandChipTextActive]}>
+                TÜM MARKALAR
+              </Text>
+            </TouchableOpacity>
+            {availableBrands.slice(0, 20).map((b) => (
+              <TouchableOpacity
+                key={b}
+                onPress={() => setSelectedBrand(selectedBrand === b ? 'ALL' : b)}
+                style={[styles.brandChip, selectedBrand === b && styles.brandChipActive]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.brandChipText, selectedBrand === b && styles.brandChipTextActive]}>
+                  {b}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       {/* 4. Liste / Yükleniyor / Hata */}
       {loading && !refreshing ? (
@@ -582,6 +640,20 @@ const styles = StyleSheet.create({
   filterTabTextActive: {
     color: '#FFFFFF',
   },
+  headerBulkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#7C3AED',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 3,
+  },
+  headerBulkBtnText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -600,6 +672,34 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textPrimary,
     fontWeight: '500',
+  },
+  brandChipsBar: {
+    marginHorizontal: 10,
+    marginTop: 6,
+  },
+  brandChipsScroll: {
+    flexDirection: 'row',
+  },
+  brandChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 3,
+    marginRight: 4,
+  },
+  brandChipActive: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  brandChipText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  brandChipTextActive: {
+    color: '#FFFFFF',
   },
   loadingBox: {
     padding: 30,

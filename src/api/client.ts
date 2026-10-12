@@ -68,6 +68,12 @@ export async function updateServerConfig(newUrl: string, newKey?: string) {
   }
 }
 
+let onUnauthorizedCallback: (() => void) | null = null;
+
+export function setOnUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorizedCallback = handler;
+}
+
 // Token güncelleme
 export async function setAuthToken(token: string | null) {
   currentToken = token;
@@ -110,7 +116,15 @@ apiClient.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401) {
       // Oturum süresi dolmuş veya yetkisiz
-      console.warn('Yetkisiz istek (401). Oturum kontrol edilmeli.');
+      console.warn('Yetkisiz istek (401). Oturum süresi doldu veya geçersiz token.');
+      currentToken = null;
+      try {
+        await AsyncStorage.multiRemove([STORAGE_KEYS.AUTH_TOKEN, STORAGE_KEYS.USER_DATA]);
+      } catch {}
+
+      if (onUnauthorizedCallback) {
+        onUnauthorizedCallback();
+      }
     }
     return Promise.reject(error);
   }

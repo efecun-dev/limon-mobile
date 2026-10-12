@@ -28,6 +28,7 @@ export const MoreMenuScreen: React.FC<{
   onNavigateToRawOrders?: () => void;
   onNavigateToCancellations?: () => void;
   onNavigateToPriceRadar?: () => void;
+  onNavigateToBulkPrice?: () => void;
 }> = ({
   onOpenServerSettings,
   onNavigateToLevels,
@@ -39,6 +40,7 @@ export const MoreMenuScreen: React.FC<{
   onNavigateToRawOrders,
   onNavigateToCancellations,
   onNavigateToPriceRadar,
+  onNavigateToBulkPrice,
 }) => {
   const { user, logout, activeBranchName } = useAuth();
   const { serverUrl, isConnected, latencyMs, testConnection } = useServer();
@@ -170,6 +172,16 @@ export const MoreMenuScreen: React.FC<{
               </View>
               <Text style={styles.toolTitle}>Fiyat Radarı</Text>
               <Text style={styles.toolDesc}>12 şube uçurum tespiti</Text>
+            </TouchableOpacity>
+          )}
+
+          {onNavigateToBulkPrice && (
+            <TouchableOpacity onPress={onNavigateToBulkPrice} style={styles.toolItem}>
+              <View style={[styles.toolIconBox, { backgroundColor: '#ECFDF5' }]}>
+                <MaterialCommunityIcons name="layers-triple-outline" size={20} color="#059669" />
+              </View>
+              <Text style={styles.toolTitle}>Toplu Fiyat</Text>
+              <Text style={styles.toolDesc}>12 şube toplu güncelle</Text>
             </TouchableOpacity>
           )}
 

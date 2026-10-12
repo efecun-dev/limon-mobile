@@ -66,6 +66,7 @@ const STATUS_FILTERS = [
   { key: 'Invoiced', label: 'FATURALANDI' },
   { key: 'Shipped', label: 'YOLDA' },
   { key: 'Delivered', label: 'TESLİM' },
+  { key: 'Alternative', label: 'ALTERNATİF', isSpecial: true },
   { key: 'Cancelled', label: 'İPTAL' },
   { key: 'UnSupplied', label: 'TEDARİK EDİLEMEDİ' },
 ];
@@ -78,6 +79,7 @@ const STATUS_MAP: Record<string, { label: string; dot: string; text: string; bg:
   Delivered: { label: 'Teslim Edildi', dot: '#10B981', text: '#047857', bg: '#ECFDF5' },
   Cancelled: { label: 'İptal', dot: '#EF4444', text: '#B91C1C', bg: '#FEF2F2' },
   UnSupplied: { label: 'Tedarik Edilemedi', dot: '#B91C1C', text: '#991B1B', bg: '#FEF2F2' },
+  Alternative: { label: 'Alternatifli', dot: '#F59E0B', text: '#B45309', bg: '#FEF3C7' },
 };
 
 export const OrdersScreen: React.FC<{
@@ -115,7 +117,7 @@ export const OrdersScreen: React.FC<{
       if (activeBranchId && activeBranchId !== 'all') {
         params.storeId = activeBranchId;
       }
-      if (selectedStatus !== 'all') {
+      if (selectedStatus !== 'all' && selectedStatus !== 'Alternative') {
         params.status = selectedStatus;
       }
       if (searchQuery.trim()) {
@@ -149,8 +151,22 @@ export const OrdersScreen: React.FC<{
       const s = o.packageStatus || 'Created';
       counts[s] = (counts[s] || 0) + 1;
     });
+    // Alternatif içeren siparişler sayacı
+    counts['Alternative'] = orders.filter((o) =>
+      o.lines?.some((l: any) => l.isAlternative || l.items?.some((it: any) => it.isAlternative))
+    ).length;
     return counts;
   }, [orders]);
+
+  // Görüntülenecek sipariş listesi (Alternative filtresi istemci tarafında süzülür)
+  const displayedOrders = useMemo(() => {
+    if (selectedStatus === 'Alternative') {
+      return orders.filter((o) =>
+        o.lines?.some((l: any) => l.isAlternative || l.items?.some((it: any) => it.isAlternative))
+      );
+    }
+    return orders;
+  }, [orders, selectedStatus]);
 
   const copyToClipboard = (text: string) => {
     Clipboard.setString(text);
@@ -378,7 +394,7 @@ export const OrdersScreen: React.FC<{
         />
       ) : (
         <FlatList
-          data={orders}
+          data={displayedOrders}
           keyExtractor={(item, idx) => item.id?.toString() || item.orderNumber || idx.toString()}
           renderItem={renderOrderItem}
           contentContainerStyle={styles.listContent}

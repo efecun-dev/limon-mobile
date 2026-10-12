@@ -8,22 +8,17 @@ import {
   RefreshControl,
   TextInput,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors, layout, typography } from '../theme/colors';
-import { useServer } from '../context/ServerContext';
+import { colors } from '../theme/colors';
 import { ordersService } from '../api/services';
 import { BRANCHES } from '../context/BranchConstants';
 import { Card } from '../components/common/Card';
-import { EmptyState } from '../components/common/EmptyState';
 import { ErrorView } from '../components/common/ErrorView';
 
 export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
   onOpenServerSettings,
 }) => {
-  const { serverUrl } = useServer();
-
   const [allOrdersData, setAllOrdersData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -31,63 +26,151 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
   const [searchBranch, setSearchBranch] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Son 30 günlük takvim sütunlarını oluştur (En sağda bugün, sola doğru son 30 gün)
-  const { days30, prev30CutoffKey } = useMemo(() => {
-    const days: Array<{
+  // Dönem Seçenekleri (Son 30 Gün + Son 3 Takvim Ayı)
+  const periodOptions = useMemo(() => {
+    const opts: {
+      id: string;
+      label: string;
+      shortLabel: string;
+      type: 'rolling' | 'month';
+      year?: number;
+      month?: number;
+      fetchDays: number;
+    }[] = [
+      {
+        id: 'last30',
+        label: 'Son 30 Gün',
+        shortLabel: '30 Gün',
+        type: 'rolling',
+        fetchDays: 35,
+      },
+    ];
+
+    const now = new Date();
+    for (let offset = 0; offset <= 2; offset++) {
+      const targetDate = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const year = targetDate.getFullYear();
+      const month = targetDate.getMonth();
+      const monthName = targetDate.toLocaleDateString('tr-TR', { month: 'long' });
+      const isCurrent = offset === 0;
+
+      // Bu ay için kaç gün geriye gitmek gerektiği
+      const diffMs = now.getTime() - targetDate.getTime();
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 5;
+
+      opts.push({
+        id: `month-${year}-${month}`,
+        label: isCurrent ? `Bu Ay (${monthName})` : `${monthName} ${year}`,
+        shortLabel: monthName,
+        type: 'month',
+        year,
+        month,
+        fetchDays: Math.max(35, diffDays),
+      });
+    }
+
+    return opts;
+  }, []);
+
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('last30');
+
+  const selectedPeriodOption = useMemo(() => {
+    return periodOptions.find((p) => p.id === selectedPeriod) || periodOptions[0];
+  }, [periodOptions, selectedPeriod]);
+
+  // Seçilen döneme göre gün listesini oluştur
+  const { currentDays, prevCutoffKey } = useMemo(() => {
+    const days: {
       key: string;
       dayOfMonth: number;
       monthLabel: string;
       label: string;
       fullLabel: string;
       isToday: boolean;
-    }> = [];
+    }[] = [];
     const now = new Date();
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const key = `${yyyy}-${mm}-${dd}`;
-      const dayOfMonth = d.getDate();
-      const monthLabel = d.toLocaleDateString('tr-TR', { month: 'short' }).replace('.', '');
-      const monthLong = d.toLocaleDateString('tr-TR', { month: 'long' });
-      days.push({
-        key,
-        dayOfMonth,
-        monthLabel,
-        label: `${dayOfMonth} ${monthLabel}`,
-        fullLabel: `${dayOfMonth} ${monthLong} ${yyyy}`,
-        isToday: i === 0,
-      });
-    }
-    const d30 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-    const prevKey = `${d30.getFullYear()}-${String(d30.getMonth() + 1).padStart(2, '0')}-${String(d30.getDate()).padStart(2, '0')}`;
-    return { days30: days, prev30CutoffKey: prevKey };
-  }, []);
 
-  // Son 35 günün sipariş verilerini çek
-  const fetch30DaysData = useCallback(async (isRefresh = false) => {
+    if (selectedPeriodOption.type === 'rolling') {
+      // Son 30 gün
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const key = `${yyyy}-${mm}-${dd}`;
+        const dayOfMonth = d.getDate();
+        const monthLabel = d.toLocaleDateString('tr-TR', { month: 'short' }).replace('.', '');
+        const monthLong = d.toLocaleDateString('tr-TR', { month: 'long' });
+        days.push({
+          key,
+          dayOfMonth,
+          monthLabel,
+          label: `${dayOfMonth} ${monthLabel}`,
+          fullLabel: `${dayOfMonth} ${monthLong} ${yyyy}`,
+          isToday: i === 0,
+        });
+      }
+      const d30 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+      const prevKey = `${d30.getFullYear()}-${String(d30.getMonth() + 1).padStart(2, '0')}-${String(d30.getDate()).padStart(2, '0')}`;
+      return { currentDays: days, prevCutoffKey: prevKey };
+    } else {
+      // Takvim ayı
+      const y = selectedPeriodOption.year!;
+      const m = selectedPeriodOption.month!;
+      // Ayın son gününü bul
+      const isCurrentMonth = y === now.getFullYear() && m === now.getMonth();
+      const lastDayOfMonth = isCurrentMonth ? now.getDate() : new Date(y, m + 1, 0).getDate();
+
+      for (let day = 1; day <= lastDayOfMonth; day++) {
+        const d = new Date(y, m, day);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const key = `${yyyy}-${mm}-${dd}`;
+        const monthLabel = d.toLocaleDateString('tr-TR', { month: 'short' }).replace('.', '');
+        const monthLong = d.toLocaleDateString('tr-TR', { month: 'long' });
+        days.push({
+          key,
+          dayOfMonth: day,
+          monthLabel,
+          label: `${day} ${monthLabel}`,
+          fullLabel: `${day} ${monthLong} ${yyyy}`,
+          isToday: isCurrentMonth && day === now.getDate(),
+        });
+      }
+
+      const prevMonthLastDay = new Date(y, m, 0);
+      const prevKey = `${prevMonthLastDay.getFullYear()}-${String(prevMonthLastDay.getMonth() + 1).padStart(2, '0')}-${String(prevMonthLastDay.getDate()).padStart(2, '0')}`;
+      return { currentDays: days, prevCutoffKey: prevKey };
+    }
+  }, [selectedPeriodOption]);
+
+  // Seçilen döneme göre sipariş verilerini çek
+  const fetchRevenueData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
-      const res = await ordersService.getOrders({ size: 300, fetchDays: 35 });
+      const res = await ordersService.getOrders({
+        size: 500,
+        fetchDays: selectedPeriodOption.fetchDays,
+      });
       setAllOrdersData(res?.content || []);
       setLastUpdated(new Date());
     } catch (err: any) {
-      console.error('Son 30 günlük ciro analizi verisi çekilemedi:', err.message);
+      console.error('Ciro analizi verisi çekilemedi:', err.message);
       setError(err.response?.data?.error || err.message || 'Ciro analizi verileri alınamadı.');
       setAllOrdersData([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [selectedPeriodOption]);
 
   useEffect(() => {
-    fetch30DaysData();
-  }, [fetch30DaysData]);
+    fetchRevenueData();
+  }, [fetchRevenueData]);
 
   // Şube ve gün bazlı ciro & sipariş hesaplaması
   const tableData = useMemo(() => {
@@ -114,13 +197,13 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
         daysOrders: {},
         prevCutoffCiro: 0,
       };
-      days30.forEach((day) => {
+      currentDays.forEach((day) => {
         branchMap[bId].daysCiro[day.key] = 0;
         branchMap[bId].daysOrders[day.key] = 0;
       });
     });
 
-    const validDaysKeys = new Set(days30.map((d) => d.key));
+    const validDaysKeys = new Set(currentDays.map((d) => d.key));
 
     allOrdersData.forEach((order) => {
       if (!order.orderDate) return;
@@ -143,13 +226,13 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
         row.daysOrders[orderDateKey] = (row.daysOrders[orderDateKey] || 0) + 1;
         row.totalCiro += orderTotal;
         row.totalOrders += 1;
-      } else if (orderDateKey === prev30CutoffKey) {
+      } else if (orderDateKey === prevCutoffKey) {
         row.prevCutoffCiro += orderTotal;
       }
     });
 
     return Object.values(branchMap).sort((a, b) => b.totalCiro - a.totalCiro);
-  }, [allOrdersData, days30, prev30CutoffKey]);
+  }, [allOrdersData, currentDays, prevCutoffKey]);
 
   // Arama filtrelemesi
   const filteredData = useMemo(() => {
@@ -167,7 +250,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
       daysOrders: {} as Record<string, number>,
     };
 
-    days30.forEach((day) => {
+    currentDays.forEach((day) => {
       summary.daysCiro[day.key] = 0;
       summary.daysOrders[day.key] = 0;
     });
@@ -175,14 +258,14 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
     tableData.forEach((row) => {
       summary.totalCiro += row.totalCiro;
       summary.totalOrders += row.totalOrders;
-      days30.forEach((day) => {
+      currentDays.forEach((day) => {
         summary.daysCiro[day.key] += row.daysCiro[day.key] || 0;
         summary.daysOrders[day.key] += row.daysOrders[day.key] || 0;
       });
     });
 
     return summary;
-  }, [tableData, days30]);
+  }, [tableData, currentDays]);
 
   // KPI Hesaplamaları
   const topBranchByCiro = useMemo(() => {
@@ -197,11 +280,11 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
 
   const activeDaysCount = useMemo(() => {
     let count = 0;
-    days30.forEach((day) => {
+    currentDays.forEach((day) => {
       if ((totalSummary.daysOrders[day.key] || 0) > 0) count++;
     });
     return count || 1;
-  }, [totalSummary, days30]);
+  }, [totalSummary, currentDays]);
 
   const avgDailyCiro = Math.round(totalSummary.totalCiro / activeDaysCount);
   const avgDailyOrders = Math.round(totalSummary.totalOrders / activeDaysCount);
@@ -210,7 +293,9 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Son 30 Günlük Veriler Hesaplanıyor...</Text>
+        <Text style={styles.loadingText}>
+          {selectedPeriodOption?.label || 'Dönem'} Verileri Hesaplanıyor...
+        </Text>
       </View>
     );
   }
@@ -220,7 +305,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
       <ErrorView
         title="Ciro Analizi Hatası"
         message={error}
-        onRetry={() => fetch30DaysData(true)}
+        onRetry={() => fetchRevenueData(true)}
         onOpenServerSettings={onOpenServerSettings}
       />
     );
@@ -231,19 +316,42 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
       {/* 1. Üst Sub-Header */}
       <View style={styles.subHeader}>
         <View style={styles.subHeaderLeft}>
-          <Text style={styles.subHeaderTitle}>SON 30 GÜNLÜK ŞUBE CİRO & SİPARİŞ ANALİZİ</Text>
+          <Text style={styles.subHeaderTitle}>
+            {selectedPeriodOption.label.toUpperCase()} ŞUBE CİRO & SİPARİŞ ANALİZİ
+          </Text>
           <Text style={styles.subHeaderSubtitle}>
-            Her gün için sol sütunda ciro tutarı, sağ sütunda sipariş adedi gösterilir
+            {lastUpdated ? `Güncelleme: ${lastUpdated.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} • ` : ''}Ciro ve sipariş dağılımı
           </Text>
         </View>
         <TouchableOpacity
           style={styles.refreshBtn}
-          onPress={() => fetch30DaysData(true)}
+          onPress={() => fetchRevenueData(true)}
           activeOpacity={0.7}
         >
           <MaterialCommunityIcons name="refresh" size={14} color="#FFFFFF" />
           <Text style={styles.refreshBtnText}>Yenile</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Dönem Seçici Sekmeler (Son 30 Gün, Bu Ay, Geçmiş Aylar) */}
+      <View style={styles.periodTabsRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.periodTabsScroll}>
+          {periodOptions.map((opt) => {
+            const isSelected = selectedPeriod === opt.id;
+            return (
+              <TouchableOpacity
+                key={opt.id}
+                onPress={() => setSelectedPeriod(opt.id)}
+                style={[styles.periodChip, isSelected && styles.periodChipActive]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.periodChipText, isSelected && styles.periodChipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       <ScrollView
@@ -252,7 +360,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => fetch30DaysData(true)}
+            onRefresh={() => fetchRevenueData(true)}
             colors={[colors.primary]}
           />
         }
@@ -261,7 +369,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
         <View style={styles.kpiGrid}>
           {/* Kart 1: Toplam Ciro */}
           <Card style={styles.kpiCard}>
-            <Text style={styles.kpiCardLabel}>SON 30 GÜN TOPLAM CİRO</Text>
+            <Text style={styles.kpiCardLabel}>{selectedPeriodOption.shortLabel.toUpperCase()} TOPLAM CİRO</Text>
             <Text style={styles.kpiCardValue}>
               {Math.floor(totalSummary.totalCiro).toLocaleString('tr-TR')} ₺
             </Text>
@@ -272,7 +380,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
 
           {/* Kart 2: Toplam Sipariş */}
           <Card style={styles.kpiCard}>
-            <Text style={styles.kpiCardLabel}>SON 30 GÜN TOPLAM SİPARİŞ</Text>
+            <Text style={styles.kpiCardLabel}>{selectedPeriodOption.shortLabel.toUpperCase()} TOPLAM SİPARİŞ</Text>
             <Text style={[styles.kpiCardValue, { color: '#2563EB' }]}>
               {totalSummary.totalOrders.toLocaleString('tr-TR')}{' '}
               <Text style={styles.kpiCardSubAdet}>Adet</Text>
@@ -323,11 +431,11 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
             ) : null}
           </View>
           <Text style={styles.searchCountText}>
-            {filteredData.length} Şube • 30 Gün
+            {filteredData.length} Şube • {selectedPeriodOption.label}
           </Text>
         </View>
 
-        {/* 4. Ana 30 Günlük Şube Ciro & Sipariş Matrisi */}
+        {/* 4. Ana Şube Ciro & Sipariş Matrisi */}
         <Card style={styles.matrixCard}>
           <ScrollView horizontal showsHorizontalScrollIndicator={true}>
             <View>
@@ -337,12 +445,12 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
                   <Text style={styles.headCellText}>ŞUBE ADI</Text>
                 </View>
                 <View style={styles.colTotalStickyHead}>
-                  <Text style={[styles.headCellText, { textAlign: 'right' }]}>30G CİRO</Text>
+                  <Text style={[styles.headCellText, { textAlign: 'right' }]}>CİRO</Text>
                 </View>
                 <View style={styles.colOrdersStickyHead}>
                   <Text style={[styles.headCellText, { textAlign: 'right' }]}>SİPARİŞ</Text>
                 </View>
-                {days30.map((d) => (
+                {currentDays.map((d) => (
                   <View
                     key={d.key}
                     style={[
@@ -385,12 +493,12 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
                   </View>
 
                   {/* Günlük Hücreler (Ciro + Sipariş) */}
-                  {days30.map((day, dIdx) => {
+                  {currentDays.map((day, dIdx) => {
                     const currentCiro = row.daysCiro[day.key] || 0;
                     const prevCiro =
                       dIdx === 0
                         ? row.prevCutoffCiro
-                        : row.daysCiro[days30[dIdx - 1].key] || 0;
+                        : row.daysCiro[currentDays[dIdx - 1].key] || 0;
                     const orderCount = row.daysOrders[day.key] || 0;
 
                     let bgStyle = styles.cellNormal;
@@ -444,7 +552,7 @@ export const RevenueScreen: React.FC<{ onOpenServerSettings: () => void }> = ({
                       {totalSummary.totalOrders.toLocaleString('tr-TR')}
                     </Text>
                   </View>
-                  {days30.map((day) => {
+                  {currentDays.map((day) => {
                     const currentCiro = totalSummary.daysCiro[day.key] || 0;
                     const currentOrders = totalSummary.daysOrders[day.key] || 0;
 
@@ -535,6 +643,38 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  periodTabsRow: {
+    backgroundColor: '#1E293B',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  periodTabsScroll: {
+    flexDirection: 'row',
+  },
+  periodChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+    backgroundColor: '#0F172A',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  periodChipActive: {
+    backgroundColor: '#F59E0B',
+    borderColor: '#D97706',
+  },
+  periodChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  periodChipTextActive: {
+    color: '#111827',
+    fontWeight: '800',
   },
   scrollArea: {
     flex: 1,
