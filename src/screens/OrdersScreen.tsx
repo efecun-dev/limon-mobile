@@ -180,8 +180,12 @@ export const OrdersScreen: React.FC<{
       bg: '#F3F4F6',
     };
 
-    const formattedDate = item.orderDate
-      ? new Date(item.orderDate).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    const d = item.orderDate ? new Date(item.orderDate) : null;
+    const isToday = d ? d.toDateString() === new Date().toDateString() : false;
+    const formattedDate = d
+      ? isToday
+        ? d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        : `${d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
       : '';
 
     const altCount = item.lines?.reduce((acc: number, l: any) =>
@@ -197,6 +201,11 @@ export const OrdersScreen: React.FC<{
           {/* Üst Satır: Sipariş No & Zaman & Kopyala */}
           <View style={styles.cardHeader}>
             <View style={styles.orderNumberRow}>
+              {isToday && (
+                <View style={styles.todayTag}>
+                  <Text style={styles.todayTagText}>BUGÜN</Text>
+                </View>
+              )}
               <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
               <Text style={styles.orderTime}>{formattedDate}</Text>
             </View>
@@ -566,6 +575,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  todayTag: {
+    backgroundColor: '#111827',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+  },
+  todayTagText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   orderNumber: {
     fontSize: 12,

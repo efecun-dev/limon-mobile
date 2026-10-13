@@ -103,20 +103,24 @@ export const DashboardScreen: React.FC<{
   const [monthlyTableData, setMonthlyTableData] = useState<any[]>([]);
 
   const [selectedTrendBranch, setSelectedTrendBranch] = useState('all');
+  const [mainTrendView, setMainTrendView] = useState<'hourly' | 'daily'>('hourly');
+  const [hourlyDateFilter, setHourlyDateFilter] = useState<'today' | 'yesterday' | 'last7' | 'month'>('today');
+  const [hourlyMetric, setHourlyMetric] = useState<'count' | 'revenue'>('count');
+  const [selectedHourHighlight, setSelectedHourHighlight] = useState<number | null>(null);
   const [periodOffset, setPeriodOffset] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [branchSelectModalVisible, setBranchSelectModalVisible] = useState(false);
 
   // 30 Günlük Sütun Takvimi (periodOffset: 0 => bugün en sağda, sola doğru 30 gün)
   const { days30, prev30CutoffKey } = useMemo(() => {
-    const days: Array<{
+    const days: {
       key: string;
       dayOfMonth: number;
       monthLabel: string;
       label: string;
       fullLabel: string;
       isToday: boolean;
-    }> = [];
+    }[] = [];
     const now = new Date();
     const startDaysAgo = (periodOffset + 1) * 30 - 1;
     const endDaysAgo = periodOffset * 30;
@@ -514,6 +518,149 @@ export const DashboardScreen: React.FC<{
     return max;
   }, [sevenDaysData, selectedTrendBranch]);
 
+  // ── Saatlik Sipariş Yoğunluğu Hesaplama Motoru (Panel Eşleşmesi) ───────────
+  const hourlyAnalytics = useMemo(() => {
+    const now = new Date();
+    const todayY = now.getFullYear();
+    const todayM = now.getMonth();
+    const todayD = now.getDate();
+
+    const yest = new Date(now);
+    yest.setDate(yest.getDate() - 1);
+    const yestY = yest.getFullYear();
+    const yestM = yest.getMonth();
+    const yestD = yest.getDate();
+
+    const sevenDaysAgoTs = now.getTime() - (7 * 24 * 60 * 60 * 1000);
+    const startOfMonthTs = new Date(todayY, todayM, 1).getTime();
+
+    // 00:00 ile 23:00 arası 24 saat
+    const hoursData = Array.from({ length: 24 }, (_, i) => ({
+      hour: i,
+      hourLabel: `${String(i).padStart(2, '0')}:00`,
+      count: 0,
+      revenue: 0,
+      deliveredCount: 0,
+    }));
+
+    let totalOrders = 0;
+    let totalRevenue = 0;
+
+    allOrdersData.forEach((o: any) => {
+      if (!o.orderDate) return;
+      if (['Cancelled', 'UnSupplied'].includes(o.packageStatus)) return;
+
+      const sid = o.storeId?.toString();
+      if (selectedTrendBranch !== 'all' && sid !== selectedTrendBranch) return;
+
+      const orderD = new Date(o.orderDate);
+      const oYear = orderD.getFullYear();
+      const oMonth = orderD.getMonth();
+      const oDate = orderD.getDate();
+      const oTs = orderD.getTime();
+
+      let matches = false;
+      if (hourlyDateFilter === 'today') {
+        matches = oYear === todayY && oMonth === todayM && oDate === todayD;
+      } else if (hourlyDateFilter === 'yesterday') {
+        matches = oYear === yestY && oMonth === yestM && oDate === yestD;
+      } else if (hourlyDateFilter === 'last7') {
+        matches = oTs >= sevenDaysAgoTs;
+      } else if (hourlyDateFilter === 'month') {
+        matches = oTs >= startOfMonthTs;
+      }
+
+      if (matches) {
+        const h = orderD.getHours();
+        const amount = o.grossAmount || o.totalPrice || 0;
+        hoursData[h].count += 1;
+        hoursData[h].revenue += amount;
+        if (o.packageStatus === 'Delivered') {
+          hoursData[h].deliveredCount += 1;
+        }
+        totalOrders += 1;
+        totalRevenue += amount;
+      }
+    });
+
+    const maxVal = Math.max(...hoursData.map((h) => (hourlyMetric === 'count' ? h.count : h.revenue)), 1);
+
+    const enrichedHours = hoursData.map((hd) => {
+      const val = hourlyMetric === 'count' ? hd.count : hd.revenue;
+      const intensityRatio = maxVal > 0 ? val / maxVal : 0;
+      const intensityScore = Math.round(intensityRatio * 100);
+
+      let intensityLevel: 'inactive' | 'low' | 'normal' | 'high' | 'peak' = 'inactive';
+      let heatColor = '#64748B';
+      let heatBg = '#F1F5F9';
+      let heatLabel = 'Sakin (0 Sipariş)';
+
+      if (val === 0) {
+        intensityLevel = 'inactive';
+        heatColor = '#94A3B8';
+        heatBg = '#F8FAFC';
+        heatLabel = 'Sakin / Hizmet Dışı';
+      } else if (intensityRatio <= 0.25) {
+        intensityLevel = 'low';
+        heatColor = '#0284C7'; // Sky Blue
+        heatBg = '#E0F2FE';
+        heatLabel = 'Düşük Yoğunluk';
+      } else if (intensityRatio <= 0.55) {
+        intensityLevel = 'normal';
+        heatColor = '#EAB308'; // Amber
+        heatBg = '#FEF3C7';
+        heatLabel = 'Normal Yoğunluk';
+      } else if (intensityRatio <= 0.85) {
+        intensityLevel = 'high';
+        heatColor = '#F97316'; // Turuncu
+        heatBg = '#FFEDD5';
+        heatLabel = 'Yüksek Yoğunluk';
+      } else {
+        intensityLevel = 'peak';
+        heatColor = '#EF4444'; // Kırmızı
+        heatBg = '#FEE2E2';
+        heatLabel = 'Pik Yoğunluk (Zirve Saat)';
+      }
+
+      return {
+        ...hd,
+        val,
+        intensityRatio,
+        intensityScore,
+        intensityLevel,
+        heatColor,
+        heatBg,
+        heatLabel,
+      };
+    });
+
+    let peakHour = enrichedHours[0];
+    enrichedHours.forEach((hd) => {
+      if (hd.val > peakHour.val) {
+        peakHour = hd;
+      }
+    });
+
+    const morningOrders = enrichedHours.slice(8, 12).reduce((a, b) => a + b.count, 0);
+    const noonOrders = enrichedHours.slice(12, 17).reduce((a, b) => a + b.count, 0);
+    const eveningOrders = enrichedHours.slice(17, 21).reduce((a, b) => a + b.count, 0);
+    const nightOrders = enrichedHours.slice(21, 24).reduce((a, b) => a + b.count, 0) + enrichedHours.slice(0, 3).reduce((a, b) => a + b.count, 0);
+    const avgIntensity = Math.round(enrichedHours.reduce((acc, h) => acc + h.intensityScore, 0) / 24);
+
+    return {
+      hoursData: enrichedHours,
+      totalOrders,
+      totalRevenue: Math.round(totalRevenue),
+      avgBasket: totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0,
+      peakHour,
+      avgIntensity,
+      morningOrders,
+      noonOrders,
+      eveningOrders,
+      nightOrders,
+    };
+  }, [allOrdersData, selectedTrendBranch, hourlyDateFilter, hourlyMetric]);
+
   if (loading && !refreshing) {
     return (
       <View style={styles.centerContainer}>
@@ -872,50 +1019,325 @@ export const DashboardScreen: React.FC<{
 
         {/* 4. Row 2: Ciro ve Sipariş Eğilimi & Sipariş Durum Dağılımı */}
         <View style={styles.rowTwoContainer}>
-          {/* Ciro ve Sipariş Eğilimi (Son 7 Gün) */}
+          {/* Ciro ve Sipariş Eğilimi & Saatlik Yoğunluk */}
           <Card style={styles.trendCard}>
+            {/* Header: Başlık ve Görünüm Geçişi */}
             <View style={styles.trendHeader}>
-              <View>
-                <Text style={styles.trendTitle}>CİRO VE SİPARİŞ EĞİLİMİ</Text>
-                <Text style={styles.trendSub}>Son 7 günlük performans karşılaştırması</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setBranchSelectModalVisible(true)}
-                style={styles.branchSelectBtn}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.branchSelectBtnText}>
-                  {selectedTrendBranch === 'all'
-                    ? 'Tüm Şubeler'
-                    : BRANCHES[selectedTrendBranch] || 'Şube'}
+              <View style={styles.trendTitleCol}>
+                <Text style={styles.trendTitle}>
+                  {mainTrendView === 'hourly' ? 'SAATLİK SİPARİŞ YOĞUNLUĞU' : 'CİRO VE SİPARİŞ EĞİLİMİ'}
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={14} color={colors.textSecondary} />
-              </TouchableOpacity>
+                <Text style={styles.trendSub}>
+                  {mainTrendView === 'hourly'
+                    ? `${hourlyDateFilter === 'today' ? 'Bugünkü' : hourlyDateFilter === 'yesterday' ? 'Dünkü' : hourlyDateFilter === 'last7' ? 'Son 7 günlük' : 'Bu ayki'} saat bazlı sipariş akışı`
+                    : 'Son 7 günlük performans karşılaştırması'}
+                </Text>
+              </View>
+
+              {/* Görünüm Geçiş Sekmesi: Saatlik vs 7 Günlük */}
+              <View style={styles.trendViewSwitch}>
+                <TouchableOpacity
+                  onPress={() => setMainTrendView('hourly')}
+                  style={[styles.trendSwitchBtn, mainTrendView === 'hourly' && styles.trendSwitchBtnActive]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.trendSwitchBtnText, mainTrendView === 'hourly' && styles.trendSwitchBtnTextActive]}>
+                    Saatlik
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setMainTrendView('daily')}
+                  style={[styles.trendSwitchBtn, mainTrendView === 'daily' && styles.trendSwitchBtnActive]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.trendSwitchBtnText, mainTrendView === 'daily' && styles.trendSwitchBtnTextActive]}>
+                    7 Günlük
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* 7 Günlük Trend Barları */}
-            <View style={styles.barsContainer}>
-              {sevenDaysData.map((d, idx) => {
-                const ciroVal = selectedTrendBranch === 'all'
-                  ? d.ciro
-                  : d.branches?.[selectedTrendBranch]?.ciro || 0;
-                const siparisVal = selectedTrendBranch === 'all'
-                  ? d.siparis
-                  : d.branches?.[selectedTrendBranch]?.siparis || 0;
-                const barHeight = Math.max(12, Math.min(100, (ciroVal / trendMaxCiro) * 100));
+            {/* Saatlik Mod Kontrolleri (Tarih, Metrik, Şube) */}
+            {mainTrendView === 'hourly' ? (
+              <View style={styles.hourlyControlsRow}>
+                {/* Tarih Filtresi */}
+                <View style={styles.filterChipGroup}>
+                  {(
+                    [
+                      { id: 'today', label: 'Bugün' },
+                      { id: 'yesterday', label: 'Dün' },
+                      { id: 'last7', label: '7 Gün' },
+                      { id: 'month', label: 'Bu Ay' },
+                    ] as const
+                  ).map((t) => (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => setHourlyDateFilter(t.id)}
+                      style={[styles.miniChip, hourlyDateFilter === t.id && styles.miniChipActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.miniChipText, hourlyDateFilter === t.id && styles.miniChipTextActive]}>
+                        {t.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
-                return (
-                  <View key={idx} style={styles.barCol}>
-                    <Text style={styles.barTopVal}>{Math.round(ciroVal / 1000)}k</Text>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.barFill, { height: `${barHeight}%` }]} />
+                {/* Metrik Filtresi: Sipariş vs Ciro */}
+                <View style={styles.filterChipGroup}>
+                  <TouchableOpacity
+                    onPress={() => setHourlyMetric('count')}
+                    style={[styles.miniChip, hourlyMetric === 'count' && styles.miniChipActiveBlue]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.miniChipText, hourlyMetric === 'count' && styles.miniChipTextActiveBlue]}>
+                      Sipariş
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setHourlyMetric('revenue')}
+                    style={[styles.miniChip, hourlyMetric === 'revenue' && styles.miniChipActiveGreen]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.miniChipText, hourlyMetric === 'revenue' && styles.miniChipTextActiveGreen]}>
+                      Ciro (₺)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Şube Seçimi */}
+                <TouchableOpacity
+                  onPress={() => setBranchSelectModalVisible(true)}
+                  style={styles.branchSelectBtnSmall}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.branchSelectBtnText} numberOfLines={1}>
+                    {selectedTrendBranch === 'all'
+                      ? 'Tüm Şubeler'
+                      : BRANCHES[selectedTrendBranch] || 'Şube'}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-down" size={12} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.dailyControlsRow}>
+                <TouchableOpacity
+                  onPress={() => setBranchSelectModalVisible(true)}
+                  style={styles.branchSelectBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.branchSelectBtnText}>
+                    {selectedTrendBranch === 'all'
+                      ? 'Tüm Şubeler'
+                      : BRANCHES[selectedTrendBranch] || 'Şube'}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-down" size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* İçerik: Saatlik vs 7 Günlük */}
+            {mainTrendView === 'hourly' ? (
+              <View style={styles.hourlyContentBox}>
+                {/* 1. Zirve Saat & Temel İstatistik Banner'ı */}
+                <View style={styles.peakHourBanner}>
+                  <View style={styles.peakHourLeft}>
+                    <View style={styles.peakIconBox}>
+                      <MaterialCommunityIcons name="fire" size={18} color="#FFFFFF" />
                     </View>
-                    <Text style={styles.barDateText}>{d.date.split(' ')[0]}</Text>
-                    <Text style={styles.barOrderCount}>{siparisVal} sip</Text>
+                    <View style={styles.peakInfoCol}>
+                      <View style={styles.peakTitleRow}>
+                        <Text style={styles.peakTitleText}>ZİRVE SAAT (EN YOĞUN ARALIK)</Text>
+                        <View style={styles.peakScoreBadge}>
+                          <Text style={styles.peakScoreBadgeText}>
+                            %{hourlyAnalytics.peakHour.intensityScore}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.peakHourRange}>
+                        {hourlyAnalytics.peakHour.hourLabel} - {String(hourlyAnalytics.peakHour.hour + 1).padStart(2, '0')}:00
+                        <Text style={styles.peakHourMeta}>
+                          {' '}({hourlyAnalytics.peakHour.count} Sip · ₺{hourlyAnalytics.peakHour.revenue.toLocaleString('tr-TR')})
+                        </Text>
+                      </Text>
+                    </View>
                   </View>
-                );
-              })}
-            </View>
+                </View>
+
+                {/* 2. 4'lü Mini İstatistikler */}
+                <View style={styles.hourlyKpiGrid}>
+                  <View style={styles.hourlyKpiCell}>
+                    <Text style={styles.hourlyKpiLabel}>TOPLAM SİPARİŞ</Text>
+                    <Text style={[styles.hourlyKpiVal, { color: '#2563EB' }]}>
+                      {hourlyAnalytics.totalOrders} <Text style={styles.kpiUnit}>Adet</Text>
+                    </Text>
+                  </View>
+                  <View style={styles.hourlyKpiCell}>
+                    <Text style={styles.hourlyKpiLabel}>TOPLAM CİRO</Text>
+                    <Text style={[styles.hourlyKpiVal, { color: '#059669' }]}>
+                      ₺{hourlyAnalytics.totalRevenue.toLocaleString('tr-TR')}
+                    </Text>
+                  </View>
+                  <View style={styles.hourlyKpiCell}>
+                    <Text style={styles.hourlyKpiLabel}>YOĞUNLUK ENDEKSİ</Text>
+                    <Text style={[styles.hourlyKpiVal, { color: '#D97706' }]}>
+                      %{hourlyAnalytics.avgIntensity}
+                    </Text>
+                  </View>
+                  <View style={styles.hourlyKpiCell}>
+                    <Text style={styles.hourlyKpiLabel}>AKŞAM (17-21)</Text>
+                    <Text style={[styles.hourlyKpiVal, { color: '#111827' }]}>
+                      {hourlyAnalytics.eveningOrders} <Text style={styles.kpiUnit}>Sip</Text>
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 3. 24 Saatlik Çubuk Grafik (Yatay Kaydırılabilir) */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.hourlyBarsScroll}>
+                  <View style={styles.hourlyBarsWrap}>
+                    {hourlyAnalytics.hoursData.map((hd) => {
+                      const isPeak = hd.hour === hourlyAnalytics.peakHour.hour && hd.count > 0;
+                      const isSelected = selectedHourHighlight === hd.hour;
+                      const barHeight = Math.max(8, Math.min(85, Math.round(hd.intensityRatio * 85)));
+
+                      return (
+                        <TouchableOpacity
+                          key={hd.hour}
+                          onPress={() => setSelectedHourHighlight(isSelected ? null : hd.hour)}
+                          style={[styles.hourlyBarCol, isSelected && styles.hourlyBarColSelected]}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.hourlyBarVal, { color: hd.heatColor }]}>
+                            {hourlyMetric === 'count'
+                              ? (hd.count > 0 ? hd.count : '')
+                              : (hd.revenue > 0 ? `${Math.round(hd.revenue / 1000)}k` : '')}
+                          </Text>
+                          <View style={styles.hourlyBarTrack}>
+                            <View
+                              style={[
+                                styles.hourlyBarFill,
+                                {
+                                  height: barHeight,
+                                  backgroundColor: hd.heatColor,
+                                },
+                                isPeak && styles.hourlyBarFillPeak,
+                              ]}
+                            />
+                          </View>
+                          <Text style={[styles.hourlyBarLabel, isPeak && styles.hourlyBarLabelPeak]}>
+                            {String(hd.hour).padStart(2, '0')}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+
+                {/* 4. 24 Saatlik Yoğunluk Şeridi (Ribbon Grid) */}
+                <View style={styles.ribbonSection}>
+                  <View style={styles.ribbonHeaderRow}>
+                    <Text style={styles.ribbonTitle}>24 SAATLİK OPERASYONEL YOĞUNLUK DAĞILIMI</Text>
+                    <View style={styles.ribbonLegend}>
+                      <View style={[styles.legendDot, { backgroundColor: '#94A3B8' }]} />
+                      <Text style={styles.legendText}>Sakin</Text>
+                      <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
+                      <Text style={styles.legendText}>Düşük</Text>
+                      <View style={[styles.legendDot, { backgroundColor: '#EAB308' }]} />
+                      <Text style={styles.legendText}>Normal</Text>
+                      <View style={[styles.legendDot, { backgroundColor: '#F97316' }]} />
+                      <Text style={styles.legendText}>Yüksek</Text>
+                      <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
+                      <Text style={styles.legendText}>Pik</Text>
+                    </View>
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.ribbonGrid}>
+                      {hourlyAnalytics.hoursData.map((hd) => {
+                        const isPeak = hd.hour === hourlyAnalytics.peakHour.hour && hd.count > 0;
+                        const isSelected = selectedHourHighlight === hd.hour;
+                        return (
+                          <TouchableOpacity
+                            key={`ribbon-${hd.hour}`}
+                            onPress={() => setSelectedHourHighlight(isSelected ? null : hd.hour)}
+                            style={[
+                              styles.ribbonItem,
+                              { backgroundColor: hd.heatBg, borderColor: isPeak ? '#EF4444' : isSelected ? '#3B82F6' : '#E2E8F0' },
+                              isPeak && styles.ribbonItemPeak,
+                              isSelected && styles.ribbonItemSelected,
+                            ]}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.ribbonHourNum}>{String(hd.hour).padStart(2, '0')}</Text>
+                            <View style={[styles.ribbonColorLine, { backgroundColor: hd.heatColor }]} />
+                            <Text style={[styles.ribbonCountText, { color: isPeak ? '#B91C1C' : '#1E293B' }]}>
+                              {hd.count > 0 ? hd.count : '—'}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+
+                {/* 5. Seçili Saat Detayı Kartı */}
+                {selectedHourHighlight !== null && (
+                  <View style={styles.hourDetailBox}>
+                    <View style={styles.hourDetailHeader}>
+                      <Text style={styles.hourDetailTitle}>
+                        Saat {String(selectedHourHighlight).padStart(2, '0')}:00 - {String(selectedHourHighlight + 1).padStart(2, '0')}:00 Detayı
+                      </Text>
+                      <TouchableOpacity onPress={() => setSelectedHourHighlight(null)}>
+                        <MaterialCommunityIcons name="close" size={14} color="#6B7280" />
+                      </TouchableOpacity>
+                    </View>
+                    {(() => {
+                      const h = hourlyAnalytics.hoursData[selectedHourHighlight];
+                      return (
+                        <View style={styles.hourDetailRow}>
+                          <Text style={styles.hourDetailItem}>
+                            Yoğunluk: <Text style={[styles.boldText, { color: h.heatColor }]}>{h.heatLabel} (%{h.intensityScore})</Text>
+                          </Text>
+                          <Text style={styles.hourDetailItem}>
+                            Sipariş: <Text style={styles.boldText}>{h.count} Adet</Text>
+                          </Text>
+                          <Text style={styles.hourDetailItem}>
+                            Ciro: <Text style={styles.boldText}>₺{h.revenue.toLocaleString('tr-TR')}</Text>
+                          </Text>
+                          <Text style={styles.hourDetailItem}>
+                            Ort. Sepet: <Text style={styles.boldText}>₺{h.count > 0 ? Math.round(h.revenue / h.count).toLocaleString('tr-TR') : '0'}</Text>
+                          </Text>
+                        </View>
+                      );
+                    })()}
+                  </View>
+                )}
+              </View>
+            ) : (
+              /* 7 Günlük Trend Barları */
+              <View style={styles.barsContainer}>
+                {sevenDaysData.map((d, idx) => {
+                  const ciroVal = selectedTrendBranch === 'all'
+                    ? d.ciro
+                    : d.branches?.[selectedTrendBranch]?.ciro || 0;
+                  const siparisVal = selectedTrendBranch === 'all'
+                    ? d.siparis
+                    : d.branches?.[selectedTrendBranch]?.siparis || 0;
+                  const barHeight = Math.max(12, Math.min(100, (ciroVal / trendMaxCiro) * 100));
+
+                  return (
+                    <View key={idx} style={styles.barCol}>
+                      <Text style={styles.barTopVal}>{Math.round(ciroVal / 1000)}k</Text>
+                      <View style={styles.barTrack}>
+                        <View style={[styles.barFill, { height: `${barHeight}%` }]} />
+                      </View>
+                      <Text style={styles.barDateText}>{d.date.split(' ')[0]}</Text>
+                      <Text style={styles.barOrderCount}>{siparisVal} sip</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </Card>
 
           {/* Sipariş Durum Dağılımı */}
@@ -1584,6 +2006,12 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
     paddingBottom: 6,
     marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  trendTitleCol: {
+    flex: 1,
+    minWidth: 150,
   },
   trendTitle: {
     fontSize: 11,
@@ -1595,6 +2023,100 @@ const styles = StyleSheet.create({
   trendSub: {
     fontSize: 9,
     color: '#6B7280',
+    marginTop: 1,
+  },
+  trendViewSwitch: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    padding: 2,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  trendSwitchBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 2,
+  },
+  trendSwitchBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  trendSwitchBtnText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#6B7280',
+  },
+  trendSwitchBtnTextActive: {
+    color: '#111827',
+  },
+  hourlyControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    marginBottom: 8,
+  },
+  dailyControlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 6,
+  },
+  filterChipGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    padding: 2,
+    borderRadius: 3,
+    gap: 2,
+  },
+  miniChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 2,
+  },
+  miniChipActive: {
+    backgroundColor: '#FFFFFF',
+    elevation: 1,
+  },
+  miniChipActiveBlue: {
+    backgroundColor: '#DBEAFE',
+  },
+  miniChipActiveGreen: {
+    backgroundColor: '#D1FAE5',
+  },
+  miniChipText: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#6B7280',
+  },
+  miniChipTextActive: {
+    color: '#111827',
+  },
+  miniChipTextActiveBlue: {
+    color: '#1D4ED8',
+  },
+  miniChipTextActiveGreen: {
+    color: '#047857',
+  },
+  branchSelectBtnSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 2,
+    maxWidth: 130,
   },
   branchSelectBtn: {
     flexDirection: 'row',
@@ -1608,9 +2130,257 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   branchSelectBtnText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: 'bold',
     color: '#374151',
+  },
+  hourlyContentBox: {
+    gap: 8,
+  },
+  peakHourBanner: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderLeftWidth: 4,
+    borderLeftColor: '#EF4444',
+    padding: 8,
+    borderRadius: 2,
+  },
+  peakHourLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  peakIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#DC2626',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  peakInfoCol: {
+    flex: 1,
+  },
+  peakTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  peakTitleText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#991B1B',
+    letterSpacing: 0.5,
+  },
+  peakScoreBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 4,
+    paddingVertical: 0.5,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  peakScoreBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#DC2626',
+  },
+  peakHourRange: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#111827',
+    marginTop: 1,
+  },
+  peakHourMeta: {
+    fontSize: 10,
+    fontWeight: 'normal',
+    color: '#4B5563',
+  },
+  hourlyKpiGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 6,
+    borderRadius: 2,
+    justifyContent: 'space-between',
+  },
+  hourlyKpiCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  hourlyKpiLabel: {
+    fontSize: 7.5,
+    fontWeight: 'bold',
+    color: '#64748B',
+    textTransform: 'uppercase',
+  },
+  hourlyKpiVal: {
+    fontSize: 11,
+    fontWeight: '900',
+    marginTop: 1,
+  },
+  kpiUnit: {
+    fontSize: 8,
+    fontWeight: 'normal',
+    color: '#64748B',
+  },
+  hourlyBarsScroll: {
+    marginVertical: 4,
+  },
+  hourlyBarsWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 125,
+    paddingHorizontal: 4,
+    paddingTop: 14,
+    gap: 4,
+  },
+  hourlyBarCol: {
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  hourlyBarColSelected: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 2,
+  },
+  hourlyBarVal: {
+    fontSize: 7.5,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  hourlyBarTrack: {
+    width: 14,
+    height: 85,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 2,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  hourlyBarFill: {
+    width: '100%',
+    borderRadius: 2,
+  },
+  hourlyBarFillPeak: {
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  hourlyBarLabel: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#64748B',
+    marginTop: 3,
+  },
+  hourlyBarLabelPeak: {
+    color: '#EF4444',
+    fontWeight: '900',
+  },
+  ribbonSection: {
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  ribbonHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  ribbonTitle: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#475569',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  ribbonLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  legendDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  legendText: {
+    fontSize: 7,
+    color: '#64748B',
+    marginRight: 2,
+  },
+  ribbonGrid: {
+    flexDirection: 'row',
+    gap: 3,
+    paddingVertical: 2,
+  },
+  ribbonItem: {
+    width: 28,
+    paddingVertical: 3,
+    alignItems: 'center',
+    borderRadius: 2,
+    borderWidth: 1,
+  },
+  ribbonItemPeak: {
+    borderWidth: 1.5,
+    borderColor: '#EF4444',
+  },
+  ribbonItemSelected: {
+    borderWidth: 1.5,
+    borderColor: '#2563EB',
+  },
+  ribbonHourNum: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#475569',
+  },
+  ribbonColorLine: {
+    width: 16,
+    height: 3,
+    borderRadius: 1.5,
+    marginVertical: 2,
+  },
+  ribbonCountText: {
+    fontSize: 8.5,
+    fontWeight: '900',
+  },
+  hourDetailBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 2,
+    padding: 8,
+    marginTop: 4,
+  },
+  hourDetailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingBottom: 4,
+    marginBottom: 4,
+  },
+  hourDetailTitle: {
+    fontSize: 9.5,
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  hourDetailRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  hourDetailItem: {
+    fontSize: 9,
+    color: '#475569',
   },
   barsContainer: {
     flexDirection: 'row',

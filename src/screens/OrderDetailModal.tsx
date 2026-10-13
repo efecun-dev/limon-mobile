@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -62,6 +62,17 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
   const [showRawJson, setShowRawJson] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  // Alternatif ve iptal olan ürünleri otomatik olarak listenin en başına getir
+  const sortedLines = useMemo(() => {
+    const lines = order?.lines;
+    if (!lines || !Array.isArray(lines)) return [];
+    return [...lines].sort((a: any, b: any) => {
+      const aAlt = (a.isAlternative || a.items?.some((it: any) => it.isAlternative)) ? 2 : (a.causedCancel || a.isCancelled || a.items?.some((it: any) => it.isCancelled)) ? 1 : 0;
+      const bAlt = (b.isAlternative || b.items?.some((it: any) => it.isAlternative)) ? 2 : (b.causedCancel || b.isCancelled || b.items?.some((it: any) => it.isCancelled)) ? 1 : 0;
+      return bAlt - aAlt;
+    });
+  }, [order?.lines]);
+
   if (!order) return null;
 
   const isCancelled = ['Cancelled', 'UnSupplied'].includes(order.packageStatus);
@@ -75,8 +86,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
 
   const formattedDate = order.orderDate
     ? new Date(order.orderDate).toLocaleString('tr-TR', {
-        day: '2-digit',
-        month: 'short',
+        day: 'numeric',
+        month: 'long',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
@@ -270,8 +281,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, visib
                 <Text style={[styles.thText, { flex: 1, textAlign: 'right' }]}>TOPLAM</Text>
               </View>
 
-              {order.lines && order.lines.length > 0 ? (
-                order.lines.map((line: any, idx: number) => {
+              {sortedLines.length > 0 ? (
+                sortedLines.map((line: any, idx: number) => {
                   const quantity = line.items?.length || line.amount || 1;
                   const unitPrice = line.price || 0;
                   const totalPrice = unitPrice * quantity;
